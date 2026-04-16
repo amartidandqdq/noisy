@@ -42,6 +42,106 @@ DEFAULT_RUN_TIMEOUT_SECONDS = None
 SECONDS_PER_DAY = 24 * 60 * 60
 DEFAULT_DNS_WORKERS = 3
 
+# ---- DNS TTL ----
+DNS_TTL_MIN = 60       # TTL minimum force (secondes) — evite re-requetes trop frequentes
+DNS_TTL_MAX = 86400    # TTL max cap (24h)
+
+# ---- DNS PREFETCH ----
+DEFAULT_PREFETCH_WORKERS = 0
+PREFETCH_MAX_DOMAINS = 20      # max domaines extraits par page pour prefetch
+PREFETCH_MIN_SLEEP = 30
+PREFETCH_MAX_SLEEP = 90
+PREFETCH_MAX_BODY = 65_536     # 64KB — assez pour extraire les liens
+
+# ---- THIRD-PARTY DOMAINS (CDN, trackers, pubs, media, infra) ----
+THIRD_PARTY_DOMAINS = [
+    # CDN
+    "fonts.googleapis.com", "fonts.gstatic.com", "cdn.jsdelivr.net",
+    "cdnjs.cloudflare.com", "ajax.googleapis.com", "unpkg.com",
+    "stackpath.bootstrapcdn.com", "maxcdn.bootstrapcdn.com",
+    # Analytics / Trackers
+    "www.google-analytics.com", "analytics.google.com",
+    "googletagmanager.com", "www.googletagmanager.com",
+    "connect.facebook.net", "www.facebook.com",
+    "pixel.facebook.com", "bat.bing.com",
+    "static.hotjar.com", "snap.licdn.com",
+    # Pubs
+    "pagead2.googlesyndication.com", "securepubads.g.doubleclick.net",
+    "tpc.googlesyndication.com", "adservice.google.com",
+    "criteo.com", "static.criteo.net", "cdn.taboola.com",
+    "cdn.outbrain.com", "amazon-adsystem.com",
+    # Media
+    "i.ytimg.com", "yt3.ggpht.com", "play.google.com",
+    "platform.twitter.com", "abs.twimg.com",
+    # Infra (OCSP, CRL, updates)
+    "ocsp.digicert.com", "ocsp.pki.goog", "crl.globalsign.com",
+    "clients1.google.com", "update.googleapis.com",
+]
+THIRD_PARTY_PER_PAGE_MIN = 8
+THIRD_PARTY_PER_PAGE_MAX = 25
+
+# ---- BACKGROUND APP DOMAINS (systeme, NTP, apps communes) ----
+BACKGROUND_APP_DOMAINS = [
+    # NTP / Systeme
+    "time.windows.com", "time.apple.com", "time.google.com",
+    "ntp.ubuntu.com", "pool.ntp.org",
+    # Verification connectivite
+    "www.msftconnecttest.com", "dns.msftncsi.com",
+    "connectivitycheck.gstatic.com", "captive.apple.com",
+    "detectportal.firefox.com", "connectivity-check.ubuntu.com",
+    # Mises a jour
+    "update.microsoft.com", "download.windowsupdate.com",
+    "officecdn.microsoft.com", "go.microsoft.com",
+    # Apps communes
+    "api.spotify.com", "apresolve.spotify.com", "spclient.wg.spotify.com",
+    "web.whatsapp.com", "mmg.whatsapp.net", "static.whatsapp.net",
+    "discord.com", "gateway.discord.gg", "cdn.discordapp.com",
+    "steamcommunity.com", "store.steampowered.com", "api.steampowered.com",
+    "signal.org", "textsecure-service.whispersystems.org",
+    "outlook.office365.com", "login.microsoftonline.com",
+    "push.services.mozilla.com", "safebrowsing.googleapis.com",
+]
+BACKGROUND_MIN_SLEEP = 30
+BACKGROUND_MAX_SLEEP = 180
+
+# ---- MICRO-BURST ----
+BURST_SIZE_MIN = 30
+BURST_SIZE_MAX = 60
+BURST_SILENCE_MIN = 10    # secondes de silence apres burst
+BURST_SILENCE_MAX = 120
+BURST_INTRA_DELAY = 0.02  # 20ms entre requetes dans un burst
+
+# ---- NXDOMAIN / CAPTIVE PORTAL ----
+CAPTIVE_PORTAL_DOMAINS = [
+    "connectivitycheck.gstatic.com",  # Android / Chrome
+    "captive.apple.com",               # macOS / iOS
+    "detectportal.firefox.com",         # Firefox
+    "www.msftconnecttest.com",          # Windows
+    "dns.msftncsi.com",                 # Windows legacy
+]
+NXDOMAIN_PROBE_INTERVAL = (300, 900)   # 5-15 min entre sondes Chrome
+CAPTIVE_PORTAL_INTERVAL = (600, 1800)  # 10-30 min entre checks portail
+
+# ---- PROBE PAYLOAD (anti-DPI) ----
+PROBE_RANGE_MIN = 4096     # 4KB min Range payload
+PROBE_RANGE_MAX = 12288    # 12KB max Range payload
+
+# ---- STREAMING CDN (simulation video) ----
+STREAMING_CDN_DOMAINS = [
+    # YouTube CDN (domaines generiques — les vrais ont des suffixes dynamiques)
+    "redirector.googlevideo.com", "manifest.googlevideo.com",
+    # Twitch
+    "usher.ttvnw.net", "static.twitchcdn.net",
+    # Generic CDN (fallback fiable)
+    "cdn.jsdelivr.net", "cdnjs.cloudflare.com",
+    "ajax.googleapis.com", "fonts.gstatic.com",
+    "cdn.cloudflare.com", "unpkg.com",
+]
+STREAM_CHUNK_SIZE = (131_072, 524_288)   # 128KB-512KB par chunk
+STREAM_CHUNK_DELAY = (1.0, 3.0)          # secondes entre chunks (simule buffering)
+STREAM_SESSION_DURATION = (60, 300)      # 1-5 min par "visionnage"
+STREAM_PAUSE = (30, 120)                 # pause entre sessions streaming
+
 # ---- CACHE ----
 DEFAULT_VISITED_MAX = 500_000
 

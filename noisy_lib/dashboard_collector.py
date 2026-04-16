@@ -204,6 +204,13 @@ class MetricsCollector:
                 "referer_chains": self.crawlers[0].features.get("referer_chains", True) if self.crawlers else True,
                 "asset_fetching": self.crawlers[0].features.get("asset_fetching", True) if self.crawlers else True,
                 "bandwidth_throttle": self.crawlers[0].features.get("bandwidth_throttle", False) if self.crawlers else False,
+                "dns_optimized": self.crawlers[0].features.get("dns_optimized", False) if self.crawlers else False,
+                "dns_prefetch": self.crawlers[0].features.get("dns_prefetch", False) if self.crawlers else False,
+                "thirdparty_burst": self.crawlers[0].features.get("thirdparty_burst", False) if self.crawlers else False,
+                "background_noise": self.crawlers[0].features.get("background_noise", False) if self.crawlers else False,
+                "nxdomain_probes": self.crawlers[0].features.get("nxdomain_probes", False) if self.crawlers else False,
+                "ech": self.crawlers[0].features.get("ech", False) if self.crawlers else False,
+                "stream_noise": self.crawlers[0].features.get("stream_noise", False) if self.crawlers else False,
             },
         }
 
@@ -438,7 +445,10 @@ class MetricsCollector:
 
         # New stealth features — propagate to crawler.features dict
         for key in ("tls_rotation", "realistic_depth", "referer_chains",
-                    "asset_fetching", "bandwidth_throttle"):
+                    "asset_fetching", "bandwidth_throttle",
+                    "dns_optimized", "dns_prefetch",
+                    "thirdparty_burst", "background_noise", "nxdomain_probes",
+                    "ech", "stream_noise"):
             if key in data:
                 val = bool(data[key])
                 for c in self.crawlers:

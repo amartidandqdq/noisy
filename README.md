@@ -99,6 +99,13 @@ python noisy.py [OPTIONS]
 | `--cookie-persist` | off | Persist cookies between sessions |
 | `--ws-workers` | 0 | WebSocket noise workers |
 | `--mirror` | off | Traffic mirror mode (DNS cache observation) |
+| `--prefetch-workers` | 0 | DNS prefetch workers (browser-like link prefetching) |
+| `--dns-optimized` | off | Lightweight mode: Connection:close, 64KB max, no assets |
+| `--thirdparty-burst` | off | Third-party DNS burst (CDN/trackers/ads per page) |
+| `--background-noise` | off | Background app DNS noise (NTP, Spotify, Steam...) |
+| `--nxdomain-probes` | off | Chrome NXDOMAIN probes + captive portal checks |
+| `--ech` | off | Encrypted Client Hello via curl_cffi (hides SNI from ISP) |
+| `--stream-noise` | off | Streaming simulation (long CDN connections with chunks) |
 
 ---
 
@@ -121,8 +128,8 @@ noisy_lib/
   fetch_client.py            HTTP GET with retry + throttle (80 lines)
   crawler_session.py         CrawlerBase: session, cookies, domain helpers (123 lines)
   crawler.py                 UserCrawler: fetch + crawl_worker (150 lines)
-  workers.py                 DNS / stats / UA refresh / HEAD / search noise (182 lines)
-  tls_profiles.py            TLS cipher rotation for JA3 diversity (75 lines)
+  workers.py                 DNS / stats / UA refresh / HEAD / search noise (220 lines)
+  tls_profiles.py            TLS cipher + ALPN rotation for JA3 diversity (82 lines)
   depth_model.py             Probabilistic crawl depth model (28 lines)
   referer_chain.py           Realistic HTTP referer chain simulation (77 lines)
   asset_fetcher.py           Static asset partial downloads (86 lines)
@@ -130,7 +137,12 @@ noisy_lib/
   throttle.py                Token bucket bandwidth throttling (61 lines)
   ws_noise.py                WebSocket/SSE idle connection noise (113 lines)
   traffic_mirror.py          DNS cache mirroring + proportional noise (161 lines)
-  dashboard_collector.py     MetricsCollector + settings persistence (501 lines)
+  dns_resolver.py            DNS TTL cache with IP persistence (111 lines)
+  dns_prefetch.py            Browser-like DNS prefetch from page links (170 lines)
+  dns_stealth.py             3rd-party burst, background noise, micro-burst, NXDOMAIN (163 lines)
+  ech_client.py              Encrypted Client Hello probe via curl_cffi (66 lines)
+  stream_noise.py            Streaming CDN simulation with chunked downloads (101 lines)
+  dashboard_collector.py     MetricsCollector + settings persistence (520 lines)
   dashboard.py               FastAPI routes + WebSocket + webhook (198 lines)
   static/dashboard.html      Single-file dashboard UI
 ```
@@ -161,8 +173,22 @@ Each file has a 3-line header: purpose, inputs/outputs, and call graph.
    - **Mobile simulation** with real mobile UAs and reduced crawl depth
 5. Background workers generate **DNS noise**, **HTTP HEAD noise**, **search engine noise**, and **WebSocket noise**
 6. Optional **traffic mirroring** (`--mirror`) observes system DNS cache and generates proportional noise
-7. Stats reported every 60s to console; dashboard pushes via WebSocket every 2s
-8. **Auto-pause** if failure rate spikes above 50%
+7. **DNS stealth layer** (opt-in flags):
+   - **DNS TTL cache** — respects TTL from DNS responses, no re-query before expiry
+   - **DNS→TCP→TLS→SNI correlation** — every DNS query followed by real TCP+TLS handshake with payload
+   - **DNS prefetch** (`--prefetch-workers`) — extracts domains from page links, resolves in burst (like Chrome)
+   - **Third-party burst** (`--thirdparty-burst`) — resolves 8-25 CDN/tracker/ad domains per page (iceberg effect)
+   - **Background app noise** (`--background-noise`) — NTP, Spotify, WhatsApp, Discord, Steam, Windows Update...
+   - **Micro-bursting** — 30-60 simultaneous DNS queries then silence (human browsing pattern)
+   - **NXDOMAIN probes** (`--nxdomain-probes`) — Chrome intranet redirect detector + captive portal checks
+8. **Anti-DPI hardening** (opt-in flags):
+   - **Range payload** — GET with Range header (4-12KB real data) instead of empty HEAD (defeats DPI heuristics)
+   - **ALPN negotiation** — h2 + http/1.1 in every TLS handshake (browser fingerprint)
+   - **IP persistence** — same IP per domain for entire TTL (no round-robin churn)
+   - **ECH** (`--ech`) — Encrypted Client Hello via curl_cffi/BoringSSL (hides SNI from ISP)
+   - **Streaming noise** (`--stream-noise`) — long-lived CDN connections with chunked downloads (simulates video)
+9. Stats reported every 60s to console; dashboard pushes via WebSocket every 2s
+10. **Auto-pause** if failure rate spikes above 50%
 
 ---
 

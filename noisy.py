@@ -26,6 +26,13 @@ from noisy_lib.structures import LRUSet
 from noisy_lib.workers import dns_noise_worker, http_noise_worker, refresh_user_agents_loop, search_noise_worker, stats_reporter
 from noisy_lib.ws_noise import ws_noise_worker
 from noisy_lib.traffic_mirror import mirror_worker
+from noisy_lib.dns_resolver import DnsCache
+from noisy_lib.dns_prefetch import dns_prefetch_worker
+from noisy_lib.dns_stealth import (
+    thirdparty_burst_worker, background_noise_worker,
+    microburst_worker, nxdomain_probe_worker,
+)
+from noisy_lib.stream_noise import stream_noise_worker
 
 log = logging.getLogger(__name__)
 
@@ -202,7 +209,17 @@ async def main_async(args):
         "asset_fetching": True, "cookie_persist": getattr(args, "cookie_persist", False),
         "bandwidth_throttle": False, "ws_noise": getattr(args, "ws_workers", 0) > 0,
         "traffic_mirror": getattr(args, "mirror", False),
+        "dns_optimized": getattr(args, "dns_optimized", False),
+        "dns_prefetch": getattr(args, "prefetch_workers", 0) > 0,
+        "thirdparty_burst": getattr(args, "thirdparty_burst", False),
+        "background_noise": getattr(args, "background_noise", False),
+        "nxdomain_probes": getattr(args, "nxdomain_probes", False),
+        "ech": getattr(args, "ech", False),
+        "stream_noise": getattr(args, "stream_noise", False),
     }
+
+    # Shared DNS TTL cache
+    dns_cache = DnsCache()
 
     crawlers = _build_crawlers(
         args, top_sites, history_urls, schedule, geo_list,
@@ -216,7 +233,8 @@ async def main_async(args):
 
     tasks = (
         [asyncio.create_task(c.run()) for c in crawlers]
-        + [asyncio.create_task(dns_noise_worker(dns_hosts, stop_event, worker_id=i)) for i in range(args.dns_workers)]
+        + [asyncio.create_task(dns_noise_worker(dns_hosts, stop_event, dns_cache=dns_cache, worker_id=i))
+           for i in range(args.dns_workers)]
         + [asyncio.create_task(stats_reporter(crawlers, stop_event)),
            asyncio.create_task(refresh_user_agents_loop(stop_event, ua_refresh_s, crawlers, ua_pool))]
         + [asyncio.create_task(http_noise_worker(dns_hosts, stop_event, worker_id=i, domain_blocklist=blocklist_set))
@@ -225,10 +243,23 @@ async def main_async(args):
            for i in range(args.search_workers)]
         + [asyncio.create_task(ws_noise_worker(stop_event, worker_id=i))
            for i in range(getattr(args, "ws_workers", 0))]
+        + [asyncio.create_task(dns_prefetch_worker(dns_hosts, stop_event, dns_cache, domain_blocklist=blocklist_set, worker_id=i))
+           for i in range(getattr(args, "prefetch_workers", 0))]
     )
 
     if getattr(args, "mirror", False):
         tasks.append(asyncio.create_task(mirror_worker(stop_event, domain_blocklist=blocklist_set)))
+
+    if getattr(args, "thirdparty_burst", False):
+        tasks.append(asyncio.create_task(thirdparty_burst_worker(dns_hosts, stop_event, dns_cache)))
+        # Micro-burst activé automatiquement avec thirdparty-burst
+        tasks.append(asyncio.create_task(microburst_worker(dns_hosts, stop_event, dns_cache)))
+    if getattr(args, "background_noise", False):
+        tasks.append(asyncio.create_task(background_noise_worker(stop_event, dns_cache)))
+    if getattr(args, "nxdomain_probes", False):
+        tasks.append(asyncio.create_task(nxdomain_probe_worker(stop_event, dns_cache)))
+    if getattr(args, "stream_noise", False):
+        tasks.append(asyncio.create_task(stream_noise_worker(stop_event, dns_cache)))
 
     if args.dashboard:
         from noisy_lib.dashboard import MetricsCollector, start_dashboard

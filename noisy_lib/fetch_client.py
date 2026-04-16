@@ -9,7 +9,7 @@ from typing import Optional
 
 import aiohttp
 
-from .config import MAX_RESPONSE_BYTES, MAX_RETRIES, REQUEST_TIMEOUT, RETRY_BASE_DELAY
+from .config import MAX_RESPONSE_BYTES, MAX_RETRIES, PREFETCH_MAX_BODY, REQUEST_TIMEOUT, RETRY_BASE_DELAY
 from .tls_profiles import DEFAULT_SSL_CONTEXT
 
 log = logging.getLogger(__name__)
@@ -44,26 +44,33 @@ async def fetch_with_retry(
     headers: dict,
     ssl_context: Optional[ssl.SSLContext] = None,
     throttle=None,
+    lightweight: bool = False,
 ) -> FetchResult:
-    """GET avec backoff exponentiel (MAX_RETRIES tentatives). Retourne FetchResult."""
+    """GET avec backoff exponentiel. lightweight=True: Connection:close, 64KB max, 0 retry."""
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
     last_exc: Optional[Exception] = None
     ctx = ssl_context or DEFAULT_SSL_CONTEXT
 
-    for attempt in range(MAX_RETRIES):
+    max_bytes = PREFETCH_MAX_BODY if lightweight else MAX_RESPONSE_BYTES
+    max_retries = 1 if lightweight else MAX_RETRIES
+    req_headers = dict(headers)
+    if lightweight:
+        req_headers["Connection"] = "close"
+
+    for attempt in range(max_retries):
         try:
             async with session.get(
-                url, headers=headers, timeout=timeout,
+                url, headers=req_headers, timeout=timeout,
                 ssl=ctx, allow_redirects=True,
             ) as resp:
                 if resp.status >= 500:
-                    if attempt < MAX_RETRIES - 1:
+                    if attempt < max_retries - 1:
                         await asyncio.sleep(RETRY_BASE_DELAY * (2 ** attempt))
                         continue
                     return FetchResult(None, resp.status, error_msg=f"HTTP {resp.status}")
                 if resp.status >= 400:
                     return FetchResult(None, resp.status, error_msg=f"HTTP {resp.status}")
-                raw = await resp.content.read(MAX_RESPONSE_BYTES)
+                raw = await resp.content.read(max_bytes)
                 # Apply bandwidth throttle if provided
                 if throttle:
                     await throttle.consume(len(raw))
@@ -71,8 +78,8 @@ async def fetch_with_retry(
                 return FetchResult(html, resp.status, bytes_received=len(raw))
         except (aiohttp.ClientError, asyncio.TimeoutError, ssl.SSLError) as e:
             last_exc = e
-            log.debug(f"[RETRY] attempt={attempt + 1}/{MAX_RETRIES} url={url} err={e}")
-            if attempt < MAX_RETRIES - 1:
+            log.debug(f"[RETRY] attempt={attempt + 1}/{max_retries} url={url} err={e}")
+            if attempt < max_retries - 1:
                 await asyncio.sleep(RETRY_BASE_DELAY * (2 ** attempt))
 
     if last_exc:

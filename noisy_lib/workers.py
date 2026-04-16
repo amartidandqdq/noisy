@@ -1,14 +1,15 @@
 # workers.py - Tâches fond : DNS bruit, stats, refresh UA
 # IN: domains, crawlers, stop_event | OUT: none | MODIFIE: UAPool, profiles.ua
-# APPELÉ PAR: noisy.py | APPELLE: fetchers, profiles, config
+# APPELÉ PAR: noisy.py | APPELLE: fetchers, profiles, config, dns_resolver, tls_profiles
 
 import asyncio
 import logging
 import random
 import re
 import socket
+import ssl
 import time
-from typing import List, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 
 import aiohttp
 
@@ -16,7 +17,7 @@ from . import host_in_blocklist
 from .config import DEFAULT_DNS_MAX_SLEEP, DEFAULT_DNS_MIN_SLEEP, SEARCH_ENGINES, SEARCH_WORDS, UA_FALLBACK
 from .fetchers import fetch_user_agents
 from .profiles import _diurnal_weight
-from .tls_profiles import DEFAULT_SSL_CONTEXT as SSL_CONTEXT
+from .tls_profiles import DEFAULT_SSL_CONTEXT as SSL_CONTEXT, get_rotated_ssl_context
 
 if TYPE_CHECKING:
     from .crawler import UserCrawler
@@ -28,21 +29,57 @@ log = logging.getLogger(__name__)
 async def dns_noise_worker(
     domains: List[str],
     stop_event: asyncio.Event,
+    dns_cache=None,
     min_sleep: float = DEFAULT_DNS_MIN_SLEEP,
     max_sleep: float = DEFAULT_DNS_MAX_SLEEP,
     worker_id: int = 0,
 ) -> None:
-    """Résout des domaines aléatoires sans connexion HTTP (bruit DNS)."""
-    log.info(f"[DEBUT] dns_noise_worker | id={worker_id} domains={len(domains)}")
+    """Bruit DNS avec correlation TCP+TLS+HEAD (SNI correct)."""
+    log.info(f"[DEBUT] dns_noise_worker | id={worker_id} domains={len(domains)} correlated={dns_cache is not None}")
     rng = random.Random()
     loop = asyncio.get_event_loop()
     while not stop_event.is_set():
         host = rng.choice(domains)
+        # Skip si TTL encore valide — pas de requete DNS = pas de bruit reseau
+        if dns_cache and dns_cache.is_cached(host):
+            lt = time.localtime()
+            hour = lt.tm_hour + lt.tm_min / 60
+            scale = 1.0 / max(0.1, _diurnal_weight(hour))
+            await asyncio.sleep(rng.uniform(min_sleep / 3, max_sleep / 3) * scale)
+            continue
+        # DNS resolve (avec TTL cache si disponible)
+        ip = None
+        if dns_cache:
+            ip = await dns_cache.resolve(host)
+        else:
+            try:
+                result = await loop.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+                if result:
+                    ip = result[0][4][0]
+            except Exception as e:
+                log.debug(f"[DNS] failed={host} {e}")
+        if ip is None:
+            lt = time.localtime()
+            hour = lt.tm_hour + lt.tm_min / 60
+            scale = 1.0 / max(0.1, _diurnal_weight(hour))
+            await asyncio.sleep(rng.uniform(min_sleep, max_sleep) * scale)
+            continue
+        # TCP + TLS handshake + HEAD (correlation DNS→TCP→SNI)
         try:
-            await loop.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-            log.debug(f"[DNS] resolved={host}")
-        except Exception as e:
-            log.debug(f"[DNS] failed={host} {e}")
+            ssl_ctx = get_rotated_ssl_context(rng)
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(ip, 443, ssl=ssl_ctx, server_hostname=host),
+                timeout=10,
+            )
+            # HEAD minimal avec Host correct
+            writer.write(f"HEAD / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
+            await writer.drain()
+            await asyncio.wait_for(reader.read(4096), timeout=5)
+            writer.close()
+            await writer.wait_closed()
+            log.debug(f"[DNS] correlated host={host} ip={ip}")
+        except Exception:
+            pass
         lt = time.localtime()
         hour = lt.tm_hour + lt.tm_min / 60
         scale = 1.0 / max(0.1, _diurnal_weight(hour))

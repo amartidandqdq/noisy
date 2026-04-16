@@ -141,4 +141,18 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Workers WebSocket bruit (défaut: %(default)s)")
     p.add_argument("--mirror", action="store_true",
                    help="Mode miroir : bruit proportionnel au cache DNS système")
+    p.add_argument("--prefetch-workers", type=int, default=0,
+                   help="Workers DNS prefetch navigateur (défaut: %(default)s)")
+    p.add_argument("--dns-optimized", action="store_true",
+                   help="Mode DNS optimisé : Connection:close, 64KB max, pas d'assets")
+    p.add_argument("--thirdparty-burst", action="store_true",
+                   help="Burst DNS tiers (CDN/trackers/pubs) par page simulée")
+    p.add_argument("--background-noise", action="store_true",
+                   help="Bruit DNS apps arrière-plan (NTP, Spotify, WhatsApp, Steam...)")
+    p.add_argument("--nxdomain-probes", action="store_true",
+                   help="Sondes NXDOMAIN Chrome + checks portail captif")
+    p.add_argument("--ech", action="store_true",
+                   help="ECH (Encrypted Client Hello) via curl_cffi — masque le SNI")
+    p.add_argument("--stream-noise", action="store_true",
+                   help="Simulation streaming vidéo (connexions longues CDN)")
     return p

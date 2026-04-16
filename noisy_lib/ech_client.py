@@ -1,0 +1,66 @@
+# ech_client.py - Probe ECH (Encrypted Client Hello) via curl_cffi
+# IN: host:str, rng | OUT: bool | MODIFIE: rien
+# APPELE PAR: dns_stealth.py, dns_prefetch.py | APPELLE: curl_cffi, config
+
+import asyncio
+import logging
+import random
+from typing import Optional
+
+from .config import PROBE_RANGE_MAX, PROBE_RANGE_MIN, UA_FALLBACK
+
+log = logging.getLogger(__name__)
+
+_ECH_AVAILABLE: Optional[bool] = None
+
+
+def is_ech_available() -> bool:
+    """True si curl_cffi est installe et fonctionnel."""
+    global _ECH_AVAILABLE
+    if _ECH_AVAILABLE is None:
+        try:
+            from curl_cffi.requests import AsyncSession  # noqa: F401
+            _ECH_AVAILABLE = True
+        except ImportError:
+            _ECH_AVAILABLE = False
+            log.warning("[ECH] curl_cffi non installe — ECH desactive, fallback TLS classique")
+    return _ECH_AVAILABLE
+
+
+async def ech_probe(host: str, rng: random.Random) -> bool:
+    """GET+Range via curl_cffi avec ECH active (impersonate Chrome).
+    Le SNI est chiffre si le serveur supporte ECH (Cloudflare etc.).
+    Retourne True si la requete a abouti."""
+    if not is_ech_available():
+        return False
+
+    try:
+        from curl_cffi.requests import AsyncSession
+
+        range_end = rng.randint(PROBE_RANGE_MIN, PROBE_RANGE_MAX)
+        url = f"https://{host}/"
+
+        async with AsyncSession(impersonate="chrome") as session:
+            resp = await asyncio.wait_for(
+                session.get(
+                    url,
+                    headers={
+                        "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Range": f"bytes=0-{range_end}",
+                        "Connection": "close",
+                    },
+                    timeout=15,
+                    allow_redirects=True,
+                ),
+                timeout=20,
+            )
+            log.debug(f"[ECH] host={host} status={resp.status_code} bytes={len(resp.content)}")
+            return resp.status_code < 500
+
+    except asyncio.TimeoutError:
+        log.debug(f"[ECH] timeout host={host}")
+        return False
+    except Exception as e:
+        log.debug(f"[ECH] failed host={host}: {e}")
+        return False

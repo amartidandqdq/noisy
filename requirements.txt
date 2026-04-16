@@ -1,4 +1,6 @@
 aiohttp==3.13.5
 Brotli>=1.1.0
+curl_cffi>=0.7
+dnspython>=2.6
 fastapi>=0.110
 uvicorn[standard]>=0.29

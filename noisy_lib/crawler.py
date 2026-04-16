@@ -42,9 +42,11 @@ class UserCrawler(CrawlerBase):
             ssl_ctx = self.profile.ssl_context if self.features.get("tls_rotation", True) else None
             try:
                 await self.rate_limiter.wait(domain, self.rng)
+                dns_opt = self.features.get("dns_optimized", False)
                 result = await fetch_with_retry(
                     session, url, self.profile.get_headers(referrer),
                     ssl_context=ssl_ctx, throttle=self._throttle,
+                    lightweight=dns_opt,
                 )
                 if not result.ok:
                     self.stats["failed"] += 1
@@ -68,8 +70,8 @@ class UserCrawler(CrawlerBase):
                         result.status, result.bytes_received, "",
                     )
                 links = extract_links(html, url, blacklist=self.url_blacklist, domain_blocklist=self.domain_blocklist)
-                # Fetch static assets (images, CSS, JS) if enabled
-                if self.features.get("asset_fetching", True) and html:
+                # Fetch static assets (images, CSS, JS) if enabled (skip in dns_optimized mode)
+                if self.features.get("asset_fetching", True) and not dns_opt and html:
                     assets = extract_assets(html, url, blacklist=self.url_blacklist)
                     if assets:
                         asset_bytes = await fetch_assets(

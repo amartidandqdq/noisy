@@ -734,8 +734,44 @@ function update(d) {
     tags.push(f.diurnal
       ?`<span class="feat-tag on" onclick="toggleFeat('diurnal',false)" title="Click to disable diurnal curve">diurnal on</span>`
       :`<span class="feat-tag off" onclick="toggleFeat('diurnal',true)" title="Click to enable diurnal curve">diurnal off</span>`);
+    // Stealth features (boolean toggles from crawler.features dict)
+    const boolTags=[
+      ['tls_rotation','tls rotation','JA3 cipher rotation every 15-60 min'],
+      ['realistic_depth','realistic depth','60% bounce / 25% short / 15% deep'],
+      ['referer_chains','referer chains','Search/direct/social/cross-site referers'],
+      ['asset_fetching','asset fetching','Partial download of images/CSS/JS'],
+      ['bandwidth_throttle','bandwidth throttle','Token bucket (fiber/4G/ADSL)'],
+    ];
+    boolTags.forEach(([key,label,tip])=>{
+      const on=f[key]===true||f[key]===undefined;
+      tags.push(`<span class="feat-tag ${on?'on':'off'}" onclick="toggleFeat('${key}',${!on})" title="${tip}">${label} ${on?'on':'off'}</span>`);
+    });
     tags.push('<span class="feat-tag on" title="Always on">stealth headers</span>');
     tags.push('<span class="feat-tag on" title="Always on">blocklist oisd</span>');
+    tags.push('<span class="feat-tag on" title="ALPN h2/http1.1 negotiation">alpn</span>');
+    // DNS Stealth separator
+    tags.push('<br><span style="font-size:9px;color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;width:100%;margin-top:6px;display:block">dns stealth</span>');
+    const dnsTags=[
+      ['dns_optimized','dns optimized','Connection:close, 64KB max, skip assets'],
+      ['dns_prefetch','dns prefetch','Browser-like DNS prefetch from page links'],
+      ['thirdparty_burst','3rd party burst','CDN/tracker/ad DNS burst per page (iceberg effect)'],
+      ['background_noise','bg app noise','NTP, Spotify, WhatsApp, Steam, Windows Update...'],
+      ['nxdomain_probes','nxdomain probes','Chrome intranet detector + captive portal checks'],
+    ];
+    dnsTags.forEach(([key,label,tip])=>{
+      const on=f[key]===true;
+      tags.push(`<span class="feat-tag ${on?'on':'off'}" onclick="toggleFeat('${key}',${!on})" title="${tip}">${label} ${on?'on':'off'}</span>`);
+    });
+    // Anti-DPI separator
+    tags.push('<br><span style="font-size:9px;color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;width:100%;margin-top:6px;display:block">anti-dpi</span>');
+    const dpiTags=[
+      ['ech','ech (encrypted sni)','Encrypted Client Hello via curl_cffi — hides SNI from ISP'],
+      ['stream_noise','stream noise','Long CDN connections simulating video streaming'],
+    ];
+    dpiTags.forEach(([key,label,tip])=>{
+      const on=f[key]===true;
+      tags.push(`<span class="feat-tag ${on?'on':'off'}" onclick="toggleFeat('${key}',${!on})" title="${tip}">${label} ${on?'on':'off'}</span>`);
+    });
     document.getElementById('featTags').innerHTML=tags.join('');
   }
   // Timestamp
@@ -848,14 +884,9 @@ async function importSettings(input){
 }
 async function toggleFeat(key, value){
   const data={};
-  if(key==='schedule') data.schedule=value;
-  else if(key==='geo') data.geo=value;
-  else if(key==='mobile_ratio') data.mobile_ratio=value;
-  else if(key==='search_workers') data.search_workers=value;
-  else if(key==='diurnal') data.diurnal=value;
-  else if(key==='auto_pause') data.auto_pause=value;
+  data[key]=value;
   await fetch('/api/features',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-  // Sync form inputs
+  // Sync form inputs for special keys
   if(key==='schedule') document.getElementById('featSchedule').value=value||'off';
   if(key==='geo') document.getElementById('featGeo').value=value||'';
   if(key==='mobile_ratio') document.getElementById('featMobile').value=value;

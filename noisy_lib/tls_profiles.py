@@ -45,6 +45,10 @@ def _build_default_context() -> ssl.SSLContext:
     """Contexte SSL par défaut (pas de rotation)."""
     ctx = ssl.create_default_context()
     ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)
+    try:
+        ctx.set_alpn_protocols(["h2", "http/1.1"])
+    except Exception:
+        pass
     return ctx
 
 
@@ -64,6 +68,12 @@ def get_rotated_ssl_context(rng: Optional[random.Random] = None) -> ssl.SSLConte
     except ssl.SSLError:
         log.debug(f"[TLS] cipher set failed, using default")
         return DEFAULT_SSL_CONTEXT
+
+    # ALPN — obligatoire pour ressembler a un vrai navigateur (h2 + http/1.1)
+    try:
+        ctx.set_alpn_protocols(["h2", "http/1.1"])
+    except Exception:
+        pass
 
     # Rotate elliptic curve groups if supported (Python 3.10+)
     if hasattr(ctx, "set_ecdh_curve"):
