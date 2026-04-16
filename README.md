@@ -48,10 +48,17 @@ python noisy.py --dashboard
 | **TLD distribution** | Geo-diversity chart (.com, .fr, .jp, etc.) |
 | **Diurnal curve** | 24h activity model with current position marker |
 | **Stealth score** | Traffic fingerprint analysis (domain diversity, timing variance) |
-| **Controls** | Pause/resume crawling, dark/light theme toggle |
+| **Domain categories** | 11 categories (news, social, tech, ecommerce, etc.) with colored bars |
+| **Timing heatmap** | 7×24 grid (day × hour) showing request intensity |
+| **Controls** | Pause/resume, dark/light theme, add/remove users dynamically |
 | **Config editor** | Change sleep, depth, domain delay live without restart |
-| **Export** | Download full metrics snapshot as JSON |
+| **Feature toggles** | Schedule, geo, mobile, search, auto-pause, diurnal — click on/off |
+| **TLD/Region filter** | Region checkboxes + custom TLD, applied live |
+| **Blocklist info** | OISD NSFW (404K) + phishing (362K) domains blocked |
+| **Export/Import** | Save/load config JSON + export metrics snapshot |
+| **Settings persistence** | `.noisy_settings.json` auto-saved, restored on restart |
 | **Alerts** | Banner when failure rate exceeds threshold |
+| **Auto-pause** | Auto-pause if fail% > 50% after 50+ requests |
 | **Prometheus** | `/metrics` endpoint for Grafana integration |
 | **Webhooks** | POST notifications on pause/resume/alert events |
 
@@ -77,6 +84,13 @@ python noisy.py [OPTIONS]
 | `--crux_count` | 10000 | Number of top sites to crawl |
 | `--dns_workers` | 3 | DNS noise workers |
 | `--post-noise-workers` | 1 | HTTP HEAD noise workers |
+| `--search-workers` | 0 | Search engine noise workers |
+| `--schedule` | none | Active hours (e.g. `8-23`) |
+| `--geo` | none | Geo profile (e.g. `europe_fr`, `asia_jp`) |
+| `--mobile-ratio` | 0.3 | Ratio of mobile users (0–1) |
+| `--region` | none | TLD region preset (repeatable: `europe`, `asia`, etc.) |
+| `--tld` | none | Custom TLD filter (e.g. `fr,de,uk`) |
+| `--history-file` | none | Browser history file (JSON/TXT) to mix in |
 | `--timeout` | none | Stop after N seconds |
 | `--webhook-url` | none | Webhook URL for alerts |
 | `--config` | none | JSON config file (CLI overrides) |
@@ -87,21 +101,26 @@ python noisy.py [OPTIONS]
 
 ## Architecture
 
+1 file = 1 responsibility. Max ~200 lines per file. No circular imports (DAG).
+
 ```
-noisy.py                  Entry point + orchestration (130 lines)
+noisy.py                     Entry point + orchestration (281 lines)
 noisy_lib/
-  config.py               All constants (65 lines)
-  config_loader.py        CLI parser + validation + JSON loader (105 lines)
-  structures.py           LRUSet / BoundedDict / TTLDict (90 lines)
-  profiles.py             UserProfile / UAPool / diurnal model (120 lines)
-  extractor.py            HTML link extraction + blacklist (45 lines)
-  fetchers.py             Fetch CRUX sites + user agents (100 lines)
-  rate_limiter.py         Per-domain rate limiting (55 lines)
-  fetch_client.py         HTTP GET with exponential retry (75 lines)
-  crawler.py              UserCrawler + SharedMetrics (310 lines)
-  workers.py              DNS noise / stats / UA refresh / HEAD noise (125 lines)
-  dashboard.py            FastAPI + WebSocket dashboard server (280 lines)
-  static/dashboard.html   Single-file dashboard UI (500 lines)
+  __init__.py                Shared utils: host_in_blocklist, extract_tld
+  config.py                  ALL constants + data: geo, UAs, categories, regions (218 lines)
+  config_loader.py           CLI parser + validation + JSON loader (138 lines)
+  structures.py              LRUSet / BoundedDict / TTLDict (90 lines)
+  metrics.py                 SharedMetrics cross-crawler (127 lines)
+  profiles.py                UserProfile / UAPool / stealth headers / diurnal (200 lines)
+  extractor.py               HTML link extraction + blacklist (54 lines)
+  fetchers.py                Fetch CRUX / UAs / OISD blocklists / history (169 lines)
+  rate_limiter.py            Per-domain rate limiting (54 lines)
+  fetch_client.py            HTTP GET with exponential retry (74 lines)
+  crawler.py                 UserCrawler only (213 lines)
+  workers.py                 DNS / stats / UA refresh / HEAD / search noise (181 lines)
+  dashboard_collector.py     MetricsCollector + settings persistence (501 lines)
+  dashboard.py               FastAPI routes + WebSocket + webhook (198 lines)
+  static/dashboard.html      Single-file dashboard UI
 ```
 
 Each file has a 3-line header: purpose, inputs/outputs, and call graph.
@@ -112,14 +131,19 @@ Each file has a 3-line header: purpose, inputs/outputs, and call graph.
 
 1. Fetches the **CrUX top 10,000 sites** and primes each user's queue
 2. Fetches **real user agents** from useragents.me (refreshed weekly)
-3. Spawns N virtual users, each crawling independently with:
+3. Downloads **OISD blocklists** (766K+ NSFW/phishing domains) and filters them out
+4. Spawns N virtual users, each crawling independently with:
    - Randomised delays scaled by a **diurnal activity model** (less traffic at night)
    - **Per-domain rate limiting** shared across all users
-   - **Domain health scoring** — auto-deprioritizes domains with high failure rates
+   - **Domain health scoring** — auto-skip domains with < 20% success rate
    - URL **blacklist** applied before fetch and after link extraction
    - Exponential **retry on 5xx/network errors** (not on 4xx)
-4. Background workers generate **DNS resolution noise** and **HTTP HEAD noise**
-5. Stats reported every 60s to console; dashboard pushes via WebSocket every 2s
+   - **Stealth headers**: Sec-Fetch, Sec-CH-UA, fingerprint rotation every 15–60 min
+   - **Geo profiles** with locale-aware Accept-Language and timezone offsets
+   - **Mobile simulation** with real mobile UAs and reduced crawl depth
+5. Background workers generate **DNS noise**, **HTTP HEAD noise**, and **search engine noise**
+6. Stats reported every 60s to console; dashboard pushes via WebSocket every 2s
+7. **Auto-pause** if failure rate spikes above 50%
 
 ---
 
