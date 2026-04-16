@@ -24,6 +24,8 @@ from noisy_lib.profiles import UAPool, UserProfile
 from noisy_lib.rate_limiter import DomainRateLimiter
 from noisy_lib.structures import LRUSet
 from noisy_lib.workers import dns_noise_worker, http_noise_worker, refresh_user_agents_loop, search_noise_worker, stats_reporter
+from noisy_lib.ws_noise import ws_noise_worker
+from noisy_lib.traffic_mirror import mirror_worker
 
 log = logging.getLogger(__name__)
 
@@ -96,7 +98,7 @@ async def _fetch_initial_data(args, ua_pool):
 
 def _build_crawlers(args, top_sites, history_urls, schedule, geo_list,
                     ua_pool, shared_visited, rate_limiter, shared_metrics,
-                    stop_event, blocklist_set) -> List[UserCrawler]:
+                    stop_event, blocklist_set, features: dict = None) -> List[UserCrawler]:
     """Construit les UserCrawler avec profils desktop/mobile."""
     _rng = random.Random()
     per_user_queue = max(10, args.max_queue_size // args.num_users)
@@ -127,6 +129,8 @@ def _build_crawlers(args, top_sites, history_urls, schedule, geo_list,
             connections_per_host=args.connections_per_host,
             keepalive_timeout=args.keepalive_timeout,
             shared_metrics=shared_metrics, domain_blocklist=blocklist_set,
+            cookie_persist=getattr(args, "cookie_persist", False),
+            features=features or {},
         ))
     log.info(f"[USERS] {n_desktop} desktop + {n_mobile} mobile | geo={geo_list or 'auto'} | schedule={schedule or 'always'}")
     return crawlers
@@ -192,10 +196,18 @@ async def main_async(args):
     rate_limiter = DomainRateLimiter(domain_delay=args.domain_delay)
     shared_metrics = SharedMetrics()
 
+    # Default feature flags
+    features = {
+        "tls_rotation": True, "realistic_depth": True, "referer_chains": True,
+        "asset_fetching": True, "cookie_persist": getattr(args, "cookie_persist", False),
+        "bandwidth_throttle": False, "ws_noise": getattr(args, "ws_workers", 0) > 0,
+        "traffic_mirror": getattr(args, "mirror", False),
+    }
+
     crawlers = _build_crawlers(
         args, top_sites, history_urls, schedule, geo_list,
         ua_pool, shared_visited, rate_limiter, shared_metrics,
-        stop_event, blocklist_set,
+        stop_event, blocklist_set, features=features,
     )
 
     dns_hosts = [h for h in (urlsplit(s).hostname for s in top_sites) if h]
@@ -211,7 +223,12 @@ async def main_async(args):
            for i in range(args.post_noise_workers)]
         + [asyncio.create_task(search_noise_worker(stop_event, worker_id=i, domain_blocklist=blocklist_set))
            for i in range(args.search_workers)]
+        + [asyncio.create_task(ws_noise_worker(stop_event, worker_id=i))
+           for i in range(getattr(args, "ws_workers", 0))]
     )
+
+    if getattr(args, "mirror", False):
+        tasks.append(asyncio.create_task(mirror_worker(stop_event, domain_blocklist=blocklist_set)))
 
     if args.dashboard:
         from noisy_lib.dashboard import MetricsCollector, start_dashboard
@@ -230,6 +247,8 @@ async def main_async(args):
             "connections_per_host": args.connections_per_host,
             "keepalive_timeout": args.keepalive_timeout,
             "domain_blocklist": blocklist_set,
+            "cookie_persist": getattr(args, "cookie_persist", False),
+            "features": features,
         })
         collector.restore_saved_settings()
         tasks.append(asyncio.create_task(start_dashboard(collector, args.dashboard_port, args.dashboard_host)))

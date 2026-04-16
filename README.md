@@ -96,6 +96,9 @@ python noisy.py [OPTIONS]
 | `--config` | none | JSON config file (CLI overrides) |
 | `--dry-run` | off | Show config without crawling |
 | `--validate-config` | off | Validate config and exit |
+| `--cookie-persist` | off | Persist cookies between sessions |
+| `--ws-workers` | 0 | WebSocket noise workers |
+| `--mirror` | off | Traffic mirror mode (DNS cache observation) |
 
 ---
 
@@ -104,20 +107,29 @@ python noisy.py [OPTIONS]
 1 file = 1 responsibility. Max ~200 lines per file. No circular imports (DAG).
 
 ```
-noisy.py                     Entry point + orchestration (281 lines)
+noisy.py                     Entry point + orchestration (300 lines)
 noisy_lib/
   __init__.py                Shared utils: host_in_blocklist, extract_tld
   config.py                  ALL constants + data: geo, UAs, categories, regions (218 lines)
-  config_loader.py           CLI parser + validation + JSON loader (138 lines)
+  config_loader.py           CLI parser + validation + JSON loader (144 lines)
   structures.py              LRUSet / BoundedDict / TTLDict (90 lines)
   metrics.py                 SharedMetrics cross-crawler (127 lines)
-  profiles.py                UserProfile / UAPool / stealth headers / diurnal (200 lines)
-  extractor.py               HTML link extraction + blacklist (54 lines)
+  profiles.py                UserProfile / UAPool / stealth headers / diurnal (202 lines)
+  extractor.py               HTML link + asset extraction (84 lines)
   fetchers.py                Fetch CRUX / UAs / OISD blocklists / history (169 lines)
   rate_limiter.py            Per-domain rate limiting (54 lines)
-  fetch_client.py            HTTP GET with exponential retry (74 lines)
-  crawler.py                 UserCrawler only (213 lines)
-  workers.py                 DNS / stats / UA refresh / HEAD / search noise (181 lines)
+  fetch_client.py            HTTP GET with retry + throttle (80 lines)
+  crawler_session.py         CrawlerBase: session, cookies, domain helpers (123 lines)
+  crawler.py                 UserCrawler: fetch + crawl_worker (150 lines)
+  workers.py                 DNS / stats / UA refresh / HEAD / search noise (182 lines)
+  tls_profiles.py            TLS cipher rotation for JA3 diversity (75 lines)
+  depth_model.py             Probabilistic crawl depth model (28 lines)
+  referer_chain.py           Realistic HTTP referer chain simulation (77 lines)
+  asset_fetcher.py           Static asset partial downloads (86 lines)
+  cookie_store.py            Cookie jar JSON persistence (59 lines)
+  throttle.py                Token bucket bandwidth throttling (61 lines)
+  ws_noise.py                WebSocket/SSE idle connection noise (113 lines)
+  traffic_mirror.py          DNS cache mirroring + proportional noise (161 lines)
   dashboard_collector.py     MetricsCollector + settings persistence (501 lines)
   dashboard.py               FastAPI routes + WebSocket + webhook (198 lines)
   static/dashboard.html      Single-file dashboard UI
@@ -133,17 +145,24 @@ Each file has a 3-line header: purpose, inputs/outputs, and call graph.
 2. Fetches **real user agents** from useragents.me (refreshed weekly)
 3. Downloads **OISD blocklists** (766K+ NSFW/phishing domains) and filters them out
 4. Spawns N virtual users, each crawling independently with:
+   - **TLS fingerprint rotation** (JA3 diversity) — 6 cipher suite orderings, rotated every 15–60 min
+   - **Realistic click depth** — 60% bounce, 25% short (2-3 pages), 15% deep browse
+   - **Referer chain simulation** — 40% search engine, 30% direct, 20% social, 10% cross-site
+   - **Static asset fetching** — 2-5 images/CSS/JS per page with Range headers
+   - **Bandwidth throttling** — token bucket (fiber/4G/ADSL) per user
+   - **Cookie persistence** — cross-session cookie replay (`--cookie-persist`)
    - Randomised delays scaled by a **diurnal activity model** (less traffic at night)
    - **Per-domain rate limiting** shared across all users
    - **Domain health scoring** — auto-skip domains with < 20% success rate
    - URL **blacklist** applied before fetch and after link extraction
    - Exponential **retry on 5xx/network errors** (not on 4xx)
-   - **Stealth headers**: Sec-Fetch, Sec-CH-UA, fingerprint rotation every 15–60 min
+   - **Stealth headers**: Sec-Fetch, Sec-CH-UA, fingerprint + TLS rotation every 15–60 min
    - **Geo profiles** with locale-aware Accept-Language and timezone offsets
    - **Mobile simulation** with real mobile UAs and reduced crawl depth
-5. Background workers generate **DNS noise**, **HTTP HEAD noise**, and **search engine noise**
-6. Stats reported every 60s to console; dashboard pushes via WebSocket every 2s
-7. **Auto-pause** if failure rate spikes above 50%
+5. Background workers generate **DNS noise**, **HTTP HEAD noise**, **search engine noise**, and **WebSocket noise**
+6. Optional **traffic mirroring** (`--mirror`) observes system DNS cache and generates proportional noise
+7. Stats reported every 60s to console; dashboard pushes via WebSocket every 2s
+8. **Auto-pause** if failure rate spikes above 50%
 
 ---
 

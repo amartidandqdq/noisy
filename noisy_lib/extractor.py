@@ -15,6 +15,7 @@ class LinkExtractor(HTMLParser):
         super().__init__()
         self.base_url = base_url
         self.links: List[str] = []
+        self.assets: List[str] = []
 
     def handle_starttag(self, tag: str, attrs):
         attr_dict = dict(attrs)
@@ -25,6 +26,19 @@ class LinkExtractor(HTMLParser):
             resolved = resolved.split("#")[0]
             if resolved.startswith("http"):
                 self.links.append(resolved)
+        # Static assets: img, link[stylesheet], script[src]
+        elif tag == "img" and "src" in attr_dict:
+            resolved = urljoin(self.base_url, attr_dict["src"]).split("#")[0]
+            if resolved.startswith("http"):
+                self.assets.append(resolved)
+        elif tag == "link" and attr_dict.get("rel", "").lower() == "stylesheet" and "href" in attr_dict:
+            resolved = urljoin(self.base_url, attr_dict["href"]).split("#")[0]
+            if resolved.startswith("http"):
+                self.assets.append(resolved)
+        elif tag == "script" and "src" in attr_dict:
+            resolved = urljoin(self.base_url, attr_dict["src"]).split("#")[0]
+            if resolved.startswith("http"):
+                self.assets.append(resolved)
 
 
 def _host_blocked(url: str, domain_blocklist: Set[str]) -> bool:
@@ -52,3 +66,19 @@ def extract_links(
     if domain_blocklist:
         links = [lnk for lnk in links if not _host_blocked(lnk, domain_blocklist)]
     return links
+
+
+def extract_assets(
+    html: str, base_url: str,
+    blacklist: Optional[List[str]] = None,
+) -> List[str]:
+    """Extrait les URLs de ressources statiques (img, css, js) du HTML."""
+    parser = LinkExtractor(base_url)
+    try:
+        parser.feed(html)
+    except Exception:
+        pass
+    assets = parser.assets
+    if blacklist:
+        assets = [a for a in assets if not any(b in a for b in blacklist)]
+    return assets

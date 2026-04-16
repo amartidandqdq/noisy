@@ -135,4 +135,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Workers de bruit recherche web (défaut: %(default)s)")
     p.add_argument("--history-file", default=None,
                    help="Fichier historique navigateur (JSON/TXT) à mixer dans le bruit")
+    p.add_argument("--cookie-persist", action="store_true",
+                   help="Persister les cookies entre sessions (.noisy_cookies/)")
+    p.add_argument("--ws-workers", type=int, default=0,
+                   help="Workers WebSocket bruit (défaut: %(default)s)")
+    p.add_argument("--mirror", action="store_true",
+                   help="Mode miroir : bruit proportionnel au cache DNS système")
     return p

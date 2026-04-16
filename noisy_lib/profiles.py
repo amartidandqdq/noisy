@@ -6,11 +6,11 @@ import asyncio
 import logging
 import math
 import random
-import ssl
 import time
 from typing import List, Optional
 
 from .config import GEO_PROFILES, MOBILE_UA_POOL, UA_FALLBACK
+from .tls_profiles import DEFAULT_SSL_CONTEXT, get_rotated_ssl_context
 
 log = logging.getLogger(__name__)
 
@@ -63,13 +63,8 @@ MOBILE_EXTRA_HEADERS = {"Sec-CH-UA-Mobile": "?1"}
 _UA_FALLBACK = UA_FALLBACK
 
 
-def _build_ssl_context() -> ssl.SSLContext:
-    ctx = ssl.create_default_context()
-    ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)
-    return ctx
-
-
-SSL_CONTEXT = _build_ssl_context()
+# Backward compat alias — use tls_profiles.DEFAULT_SSL_CONTEXT instead
+SSL_CONTEXT = DEFAULT_SSL_CONTEXT
 
 
 def _diurnal_weight(hour: float) -> float:
@@ -114,12 +109,19 @@ class UserProfile:
         self._rotate_fingerprint()
 
     def _rotate_fingerprint(self):
-        """Rotation des headers stealth (simule mise à jour navigateur)."""
+        """Rotation des headers stealth + TLS context (simule mise à jour navigateur)."""
         self._accept = self.rng.choice(_ACCEPT_VARIANTS)
         self._cache = self.rng.choice(_CACHE_VARIANTS)
         self._sec_ch_ua = self.rng.choice(SEC_CH_UA_COMBOS) if not self.is_mobile else {}
         self._dnt = str(self.rng.randint(0, 1))
+        self._ssl_context = get_rotated_ssl_context(self.rng)
         self._last_rotate = time.monotonic()
+
+    @property
+    def ssl_context(self):
+        """Contexte SSL courant (roté avec le fingerprint)."""
+        self._maybe_rotate()
+        return self._ssl_context
 
     def _maybe_rotate(self):
         if time.monotonic() - self._last_rotate > self._rotate_interval:

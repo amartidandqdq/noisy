@@ -1,93 +1,30 @@
 # crawler.py - Orchestration crawl par utilisateur virtuel
 # IN: UserProfile, shared state | OUT: none | MODIFIE: LRUSet visited, stats dict
-# APPELÉ PAR: noisy.py | APPELLE: metrics, rate_limiter, fetch_client, extractor, profiles
+# APPELÉ PAR: noisy.py | APPELLE: crawler_session, depth_model, referer_chain,
+#             asset_fetcher, extractor, fetch_client, profiles
 
 import asyncio
 import logging
 import ssl
-import time
-from typing import Dict, List, Optional
+from typing import List, Optional
 from urllib.parse import urlsplit
 
 import aiohttp
 
-from .config import DNS_CACHE_TTL, MAX_HEADER_SIZE
-from .extractor import extract_links
+from .asset_fetcher import fetch_assets
+from .crawler_session import CrawlerBase
+from .depth_model import pick_session_depth
+from .extractor import extract_assets, extract_links
 from .fetch_client import fetch_with_retry
-from .metrics import SharedMetrics
-from .profiles import UserProfile, _activity_pause_seconds
-from .rate_limiter import DomainRateLimiter
-from .structures import BoundedDict, LRUSet
+from .profiles import _activity_pause_seconds
+from .referer_chain import pick_origin_referer
 
 log = logging.getLogger(__name__)
 
 
-class UserCrawler:
-    def __init__(
-        self, profile: UserProfile, shared_root_urls: List[str],
-        shared_visited: LRUSet, rate_limiter: DomainRateLimiter,
-        max_depth: int, concurrency: int, min_sleep: float, max_sleep: float,
-        max_queue_size: int, max_links_per_page: int, url_blacklist: List[str],
-        stop_event: asyncio.Event, total_connections: int,
-        connections_per_host: int, keepalive_timeout: int,
-        shared_metrics: Optional["SharedMetrics"] = None,
-        domain_blocklist: Optional[set] = None,
-    ):
-        self.profile = profile
-        self.rng = profile.rng
-        self.root_urls = set(shared_root_urls)
-        self.shared_visited = shared_visited
-        self.rate_limiter = rate_limiter
-        self.stop_event = stop_event
-        self.max_depth = max_depth
-        self.concurrency = concurrency
-        self.min_sleep = min_sleep
-        self.max_sleep = max_sleep
-        self.max_links_per_page = max_links_per_page
-        self.url_blacklist = url_blacklist
-        self.domain_blocklist = domain_blocklist or set()
-        self.failed_counts: BoundedDict = BoundedDict(maxsize=10_000)
-        self.max_failures = 3
-        self.stats: Dict[str, int] = {
-            "visited": 0, "failed": 0, "client_errors": 0,
-            "server_errors": 0, "network_errors": 0, "queued": 0,
-            "bytes": 0,
-        }
-        self.queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
-        for url in shared_root_urls:
-            try:
-                self.queue.put_nowait((url, 0, None))
-            except asyncio.QueueFull:
-                break
-        self.semaphore = asyncio.Semaphore(concurrency)
-        self._connector = aiohttp.TCPConnector(
-            limit=total_connections, limit_per_host=connections_per_host,
-            ttl_dns_cache=DNS_CACHE_TTL, keepalive_timeout=keepalive_timeout,
-        )
-        self._session: Optional[aiohttp.ClientSession] = None
-        self.shared_metrics = shared_metrics
+class UserCrawler(CrawlerBase):
 
-    async def _session_get(self) -> aiohttp.ClientSession:
-        if self._session is None:
-            self._cookie_jar = aiohttp.CookieJar(unsafe=True)
-            self._session = aiohttp.ClientSession(
-                connector=self._connector, cookie_jar=self._cookie_jar,
-                max_line_size=MAX_HEADER_SIZE, max_field_size=MAX_HEADER_SIZE,
-            )
-        return self._session
-
-    async def close(self):
-        if self._session:
-            await self._session.close()
-            self._session = None
-        await self._connector.close()
-
-    def _domain_blocked(self, host: str) -> bool:
-        """Vérifie si le hostname ou un domaine parent est dans la blocklist (O(1))."""
-        parts = host.split(".")
-        return any(".".join(parts[i:]) in self.domain_blocklist for i in range(len(parts)))
-
-    async def fetch(self, url: str, depth: int, referrer: Optional[str]) -> Optional[List]:
+    async def fetch(self, url: str, depth: int, referrer: Optional[str], session_max: int) -> Optional[List]:
         async with self.semaphore:
             domain = urlsplit(url).hostname
             if not domain or any(b in url for b in self.url_blacklist):
@@ -96,18 +33,19 @@ class UserCrawler:
                 return None
             if url in self.shared_visited:
                 return None
-            # Pause support
             if self.shared_metrics and self.shared_metrics.is_paused:
                 await self.shared_metrics.pause_event.wait()
-            # Domain health: skip domains with < 20% success rate
             if self.shared_metrics and self.shared_metrics.domain_health(domain) < 0.2:
                 return None
             self.shared_visited.add(url)
-            log.debug(f"[FETCH] u={self.profile.user_id} depth={depth} url={url}")
             session = await self._session_get()
+            ssl_ctx = self.profile.ssl_context if self.features.get("tls_rotation", True) else None
             try:
                 await self.rate_limiter.wait(domain, self.rng)
-                result = await fetch_with_retry(session, url, self.profile.get_headers(referrer))
+                result = await fetch_with_retry(
+                    session, url, self.profile.get_headers(referrer),
+                    ssl_context=ssl_ctx, throttle=self._throttle,
+                )
                 if not result.ok:
                     self.stats["failed"] += 1
                     if result.is_client_error:
@@ -130,12 +68,21 @@ class UserCrawler:
                         result.status, result.bytes_received, "",
                     )
                 links = extract_links(html, url, blacklist=self.url_blacklist, domain_blocklist=self.domain_blocklist)
+                # Fetch static assets (images, CSS, JS) if enabled
+                if self.features.get("asset_fetching", True) and html:
+                    assets = extract_assets(html, url, blacklist=self.url_blacklist)
+                    if assets:
+                        asset_bytes = await fetch_assets(
+                            session, assets, self.rng,
+                            self.profile.get_headers(url), ssl_context=ssl_ctx,
+                        )
+                        self.stats["bytes"] += asset_bytes
                 del html
                 if links:
                     links = self.rng.sample(links, min(len(links), self.max_links_per_page))
                 if self.rng.random() < 0.05:
                     for root in self.root_urls:
-                        self._enqueue(root, 0, None)
+                        self._enqueue(root, 0, None, self.max_depth)
                 pause = _activity_pause_seconds(self.rng)
                 if pause:
                     await asyncio.sleep(pause)
@@ -169,39 +116,29 @@ class UserCrawler:
                     )
                 return None
 
-    def _record_failure(self, url: str):
-        count = (self.failed_counts.get(url, 0) or 0) + 1
-        if count >= self.max_failures:
-            self.failed_counts.pop(url, None)
-            self.root_urls.discard(url)
-        else:
-            self.failed_counts.set(url, count)
-
-    def _enqueue(self, url: str, depth: int, referrer: Optional[str]):
-        try:
-            self.queue.put_nowait((url, depth, referrer))
-            self.stats["queued"] += 1
-        except asyncio.QueueFull:
-            pass
-
     async def crawl_worker(self):
         while not self.stop_event.is_set():
-            # Schedule check: sleep until active hour
             if not self.profile.is_active_hour():
                 await asyncio.sleep(60)
                 continue
             try:
-                url, depth, referrer = await asyncio.wait_for(self.queue.get(), timeout=2.0)
+                url, depth, referrer, session_max = await asyncio.wait_for(self.queue.get(), timeout=2.0)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
-            skip = depth > self.max_depth
-            result = None if skip else await self.fetch(url, depth, referrer)
+            # Realistic depth for root URLs
+            if depth == 0 and self.features.get("realistic_depth", True):
+                session_max = pick_session_depth(self.rng, self.profile.is_mobile, self.max_depth)
+            # Referer chain origin for root URLs
+            if depth == 0 and referrer is None and self.features.get("referer_chains", True):
+                referrer = pick_origin_referer(self.rng, url)
+            skip = depth > session_max
+            result = None if skip else await self.fetch(url, depth, referrer, session_max)
             self.queue.task_done()
-            if result is not None and depth < self.max_depth:
+            if result is not None and depth < session_max:
                 for child_url, child_ref in result:
-                    self._enqueue(child_url, depth + 1, child_ref)
+                    self._enqueue(child_url, depth + 1, child_ref, session_max)
 
     async def run(self):
         log.info(f"[DEBUT] crawler | u={self.profile.user_id}")

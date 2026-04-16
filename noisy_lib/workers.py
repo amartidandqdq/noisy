@@ -15,7 +15,8 @@ import aiohttp
 from . import host_in_blocklist
 from .config import DEFAULT_DNS_MAX_SLEEP, DEFAULT_DNS_MIN_SLEEP, SEARCH_ENGINES, SEARCH_WORDS, UA_FALLBACK
 from .fetchers import fetch_user_agents
-from .profiles import SSL_CONTEXT, _diurnal_weight
+from .profiles import _diurnal_weight
+from .tls_profiles import DEFAULT_SSL_CONTEXT as SSL_CONTEXT
 
 if TYPE_CHECKING:
     from .crawler import UserCrawler

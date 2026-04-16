@@ -1,6 +1,6 @@
 # fetch_client.py - Requête HTTP avec retry exponentiel
 # IN: session, url:str, headers:dict | OUT: FetchResult | MODIFIE: rien
-# APPELÉ PAR: crawler.py | APPELLE: aiohttp, config, profiles.SSL_CONTEXT
+# APPELÉ PAR: crawler.py | APPELLE: aiohttp, config, tls_profiles, throttle
 
 import asyncio
 import logging
@@ -10,7 +10,7 @@ from typing import Optional
 import aiohttp
 
 from .config import MAX_RESPONSE_BYTES, MAX_RETRIES, REQUEST_TIMEOUT, RETRY_BASE_DELAY
-from .profiles import SSL_CONTEXT
+from .tls_profiles import DEFAULT_SSL_CONTEXT
 
 log = logging.getLogger(__name__)
 
@@ -42,16 +42,19 @@ async def fetch_with_retry(
     session: aiohttp.ClientSession,
     url: str,
     headers: dict,
+    ssl_context: Optional[ssl.SSLContext] = None,
+    throttle=None,
 ) -> FetchResult:
     """GET avec backoff exponentiel (MAX_RETRIES tentatives). Retourne FetchResult."""
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
     last_exc: Optional[Exception] = None
+    ctx = ssl_context or DEFAULT_SSL_CONTEXT
 
     for attempt in range(MAX_RETRIES):
         try:
             async with session.get(
                 url, headers=headers, timeout=timeout,
-                ssl=SSL_CONTEXT, allow_redirects=True,
+                ssl=ctx, allow_redirects=True,
             ) as resp:
                 if resp.status >= 500:
                     if attempt < MAX_RETRIES - 1:
@@ -61,6 +64,9 @@ async def fetch_with_retry(
                 if resp.status >= 400:
                     return FetchResult(None, resp.status, error_msg=f"HTTP {resp.status}")
                 raw = await resp.content.read(MAX_RESPONSE_BYTES)
+                # Apply bandwidth throttle if provided
+                if throttle:
+                    await throttle.consume(len(raw))
                 html = raw.decode(resp.charset or "utf-8", errors="replace")
                 return FetchResult(html, resp.status, bytes_received=len(raw))
         except (aiohttp.ClientError, asyncio.TimeoutError, ssl.SSLError) as e:

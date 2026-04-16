@@ -49,20 +49,29 @@ python -m pytest tests/ -v              # 67 tests, < 1s
 ## Architecture — 1 fichier = 1 responsabilité
 
 ```
-noisy.py                  → Orchestration + entry point (281 lignes)
+noisy.py                  → Orchestration + entry point (300 lignes)
 noisy_lib/
   __init__.py             → Utilitaires partagés: host_in_blocklist, extract_tld (19 lignes)
   config.py               → TOUTES constantes + données pures: geo, UAs, catégories (218 lignes)
-  config_loader.py        → Parser CLI + validation + lecture JSON (138 lignes)
+  config_loader.py        → Parser CLI + validation + lecture JSON (144 lignes)
   structures.py           → LRUSet / BoundedDict / TTLDict (90 lignes)
   metrics.py              → SharedMetrics cross-crawler (127 lignes)
-  profiles.py             → UserProfile / UAPool / stealth headers / diurnal (200 lignes)
-  extractor.py            → Extraction liens HTML + blacklist (54 lignes)
+  profiles.py             → UserProfile / UAPool / stealth headers / diurnal (202 lignes)
+  extractor.py            → Extraction liens + assets HTML (84 lignes)
   fetchers.py             → Fetch CRUX / UAs / OISD blocklists / history (169 lignes)
   rate_limiter.py         → Délai inter-requêtes par domaine (54 lignes)
-  fetch_client.py         → HTTP GET avec retry exponentiel (74 lignes)
-  crawler.py              → UserCrawler uniquement (213 lignes)
-  workers.py              → DNS / stats / UA refresh / HEAD / search noise (181 lignes)
+  fetch_client.py         → HTTP GET avec retry + throttle (80 lignes)
+  crawler_session.py      → CrawlerBase: session, cookies, domaines (123 lignes)
+  crawler.py              → UserCrawler: fetch + crawl_worker (150 lignes)
+  workers.py              → DNS / stats / UA refresh / HEAD / search noise (182 lignes)
+  tls_profiles.py         → Rotation cipher TLS pour diversité JA3 (75 lignes)
+  depth_model.py          → Modèle probabiliste profondeur crawl (28 lignes)
+  referer_chain.py        → Simulation chaînes Referer réalistes (77 lignes)
+  asset_fetcher.py        → Téléchargement partiel ressources statiques (86 lignes)
+  cookie_store.py         → Persistance cookie jar JSON (59 lignes)
+  throttle.py             → Token bucket bandwidth throttling (61 lignes)
+  ws_noise.py             → WebSocket/SSE idle connections bruit (113 lignes)
+  traffic_mirror.py       → Miroir cache DNS + bruit proportionnel (161 lignes)
   dashboard_collector.py  → MetricsCollector + settings persistence (501 lignes)
   dashboard.py            → FastAPI routes + WebSocket + webhook (198 lignes)
   static/dashboard.html   → Single-file dashboard UI
@@ -76,14 +85,23 @@ start.command             → macOS one-click launcher
 config.py (feuille — 0 import noisy_lib)
   ← config_loader.py
   ← structures.py (0 import)
+  ← tls_profiles.py ← config, ssl
+  ← depth_model.py (0 import)
+  ← referer_chain.py ← config
+  ← throttle.py ← config
+  ← cookie_store.py (0 import noisy_lib)
   ← metrics.py ← config
-  ← profiles.py ← config
+  ← profiles.py ← config, tls_profiles
   ← rate_limiter.py ← config, structures
-  ← fetch_client.py ← config, profiles
+  ← fetch_client.py ← config, tls_profiles, throttle
   ← extractor.py ← __init__
+  ← asset_fetcher.py ← config
   ← fetchers.py ← config, profiles
-  ← crawler.py ← metrics, config, extractor, fetch_client, profiles, rate_limiter, structures
-  ← workers.py ← __init__, config, fetchers, profiles
+  ← crawler_session.py ← config, cookie_store, metrics, profiles, throttle, rate_limiter, structures
+  ← crawler.py ← crawler_session, depth_model, referer_chain, asset_fetcher, extractor, fetch_client, profiles
+  ← workers.py ← __init__, config, fetchers, tls_profiles
+  ← ws_noise.py ← config, profiles
+  ← traffic_mirror.py ← __init__, config, profiles, tls_profiles
   ← dashboard_collector.py ← config, profiles, workers
   ← dashboard.py ← config, dashboard_collector
   ← noisy.py (racine — importe tout)
@@ -112,6 +130,15 @@ config.py (feuille — 0 import noisy_lib)
 | Features toggle (dashboard) | `dashboard_collector.py` (apply_features) |
 | Settings persistence | `dashboard_collector.py` (.noisy_settings.json) |
 | Utilitaire blocklist/TLD | `__init__.py` |
+| TLS cipher rotation / JA3 | `tls_profiles.py` |
+| Modèle profondeur crawl | `depth_model.py` |
+| Chaînes Referer | `referer_chain.py` |
+| Téléchargement assets statiques | `asset_fetcher.py` + `extractor.py` (extract_assets) |
+| Persistance cookies | `cookie_store.py` |
+| Bandwidth throttling | `throttle.py` |
+| WebSocket/SSE bruit | `ws_noise.py` |
+| Miroir trafic DNS | `traffic_mirror.py` |
+| Session HTTP crawler (base) | `crawler_session.py` (CrawlerBase) |
 
 ## Dashboard — fonctionnalités
 
@@ -196,13 +223,21 @@ async def ma_fonction(x):
 
 | Feature | Détail |
 |---------|--------|
+| TLS JA3 rotation | 6 cipher suite orderings, roté toutes 15-60min, `tls_profiles.py` |
+| Realistic depth | 60% bounce/25% short/15% deep, mobile cap=3, `depth_model.py` |
+| Referer chains | 40% search/30% direct/20% social/10% cross-site, `referer_chain.py` |
+| Asset fetching | 2-5 img/css/js par page, Range headers partiels, `asset_fetcher.py` |
+| Cookie persistence | Sérialisation JSON par user, `--cookie-persist`, `cookie_store.py` |
+| Bandwidth throttle | Token bucket (fiber/4G/ADSL/3G), auto-assign mobile/desktop, `throttle.py` |
+| WebSocket noise | 2-5 connexions idle (Binance/Kraken/Twitch), `--ws-workers`, `ws_noise.py` |
+| Traffic mirror | Observation cache DNS système, bruit proportionnel, `--mirror`, `traffic_mirror.py` |
 | Scheduler | Active hours `--schedule 8-23`, wrap-around supporté (22-6) |
 | Geo profiles | 21 locales (Accept-Language + tz_offset), `--geo europe_fr` |
 | Mobile sim | 10 mobile UAs, Sec-CH-UA-Mobile, depth réduit, `--mobile-ratio 0.3` |
 | Search noise | Requêtes Google/Bing/DDG/Yahoo avec mots aléatoires, suit 1-3 résultats |
 | Traffic replay | Import JSON/TXT historique navigateur, mixé avec CRUX |
 | Stealth headers | 15+ combos Accept/Cache/Sec-Fetch/DNT, rotation par session |
-| Fingerprint rotation | Changement Accept/Cache/Sec-CH-UA toutes 15-60min |
+| Fingerprint rotation | Accept/Cache/Sec-CH-UA + TLS cipher toutes 15-60min |
 | Diurnal activity | Modèle 24h réaliste (pic midi, creux nuit), toggle on/off |
 | Domain categories | 11 catégories (news, social, tech…), tracking + visualisation |
 | Auto-pause | Pause auto si fail% > 50% après 50+ requêtes |
@@ -213,11 +248,14 @@ async def ma_fonction(x):
 
 ## Statut projet
 - **Refactoring P0→P4** : terminé
+- **Code review + 8 bug fixes** : terminé
+- **Modularity audit + 6 refactors** : terminé
+- **9 nouvelles features stealth** : terminé (TLS JA3, depth model, referer chains, asset fetch, cookies, throttle, WS noise, traffic mirror, crawler split)
 - **Dashboard temps réel** : terminé (30+ fonctionnalités)
-- **Stealth features** : terminé (14 features, toutes contrôlables depuis dashboard)
 - **Audit sécurité** : terminé (bind local, HEAD-only noise, input validation, URL scheme validation)
 - **Tests** : 67 tests, tous verts, < 1s
 - **Fork** : github.com/amartidandqdq/noisy (forked from madereddy/noisy)
+- **⚠ dashboard_collector.py** : 501 lignes (god-object assumé, seule exception au max 180)
 
 ## Décisions clés
 
