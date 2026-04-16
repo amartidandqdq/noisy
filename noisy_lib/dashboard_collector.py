@@ -199,6 +199,11 @@ class MetricsCollector:
                 "geo_profiles": sorted(set(getattr(c.profile, "geo", None) for c in self.crawlers if getattr(c.profile, "geo", None))),
                 "diurnal": self.crawlers[0].profile.diurnal_enabled if self.crawlers and hasattr(self.crawlers[0].profile, "diurnal_enabled") else True,
                 "auto_pause": self.auto_pause_enabled,
+                "tls_rotation": self.crawlers[0].features.get("tls_rotation", True) if self.crawlers else True,
+                "realistic_depth": self.crawlers[0].features.get("realistic_depth", True) if self.crawlers else True,
+                "referer_chains": self.crawlers[0].features.get("referer_chains", True) if self.crawlers else True,
+                "asset_fetching": self.crawlers[0].features.get("asset_fetching", True) if self.crawlers else True,
+                "bandwidth_throttle": self.crawlers[0].features.get("bandwidth_throttle", False) if self.crawlers else False,
             },
         }
 
@@ -317,6 +322,8 @@ class MetricsCollector:
             keepalive_timeout=p["keepalive_timeout"],
             shared_metrics=self.shared_metrics,
             domain_blocklist=p.get("domain_blocklist", set()),
+            cookie_persist=p.get("cookie_persist", False),
+            features=p.get("features", {}),
         )
         self.crawlers.append(crawler)
         task = asyncio.create_task(crawler.run())
@@ -429,6 +436,15 @@ class MetricsCollector:
                 c.profile.diurnal_enabled = enabled
             changes.append(f"diurnal={'on' if enabled else 'off'}")
 
+        # New stealth features — propagate to crawler.features dict
+        for key in ("tls_rotation", "realistic_depth", "referer_chains",
+                    "asset_fetching", "bandwidth_throttle"):
+            if key in data:
+                val = bool(data[key])
+                for c in self.crawlers:
+                    c.features[key] = val
+                changes.append(f"{key}={'on' if val else 'off'}")
+
         log.info(f"[FEATURES] {', '.join(changes)}")
         _save_settings({"features": data})
         return {"status": "ok", "changes": changes}
@@ -464,7 +480,7 @@ class MetricsCollector:
                     break
             for url in shuffled[:200]:
                 try:
-                    c.queue.put_nowait((url, 0, None))
+                    c.queue.put_nowait((url, 0, None, c.max_depth))
                 except Exception:
                     break
         log.info(f"[TLD] Filtre live applique: {len(filtered)} sites (ccTLD: {sorted(allowed) if allowed else 'aucun'})")

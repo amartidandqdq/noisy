@@ -40,7 +40,8 @@ async def fetch_assets(
     """Fetch 2-max_assets ressources statiques. Retourne total bytes."""
     if not asset_urls:
         return 0
-    n = rng.randint(2, min(max_assets, len(asset_urls)))
+    upper = min(max_assets, len(asset_urls))
+    n = rng.randint(min(1, upper), max(1, upper))
     selected = rng.sample(asset_urls, min(n, len(asset_urls)))
     total_bytes = 0
     timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
