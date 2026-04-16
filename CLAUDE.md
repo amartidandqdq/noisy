@@ -173,7 +173,6 @@ config.py (feuille — 0 import noisy_lib)
 | Top domains | Top 20 par trafic avec health score + clear button |
 | TLD distribution | Chart geo-diversity (.com, .fr, .jp…) + clear button |
 | Domain categories | 11 catégories (news, social, tech, ecommerce…) avec barres colorées |
-| Timing heatmap | Grille 7×24 (jour × heure) intensité requêtes |
 | Diurnal curve | Modèle 24h avec marqueur position courante |
 | Stealth score | Fingerprint (domain diversity, TLD diversity, timing variance) |
 | Contrôles | Pause/resume, dark/light theme, +/- users dynamiques |
@@ -223,6 +222,11 @@ async def ma_fonction(x):
         log.error(f"[ERREUR] ma_fonction | {e}")
         raise
 ```
+
+## Pièges connus (PROTECTED)
+- **ALPN h2 + aiohttp = crash** : `get_rotated_ssl_context()` est appelé par `profiles.py` (→ aiohttp) ET par raw sockets. Ne JAMAIS mettre h2 en default. Utiliser `include_h2=True` uniquement dans workers/dns_prefetch/dns_stealth/stream_noise.
+- **`_save_settings({"features": data})` partiel** : `data` ne contient que la clé du dernier clic. Toujours sauvegarder via `_get_all_features_state()` pour l'état complet.
+- **`venv/.deps_installed` marker** : Empêche `start.bat` de réinstaller. Supprimer manuellement si on ajoute de nouvelles dépendances à `requirements.txt`.
 
 ## Invariants clés (PROTECTED)
 - `DomainRateLimiter` est **partagé** entre tous les crawlers (cross-user rate limiting)
@@ -294,10 +298,12 @@ async def ma_fonction(x):
 - **DNS stealth layer (5 features)** : terminé (TTL cache, DNS→TCP→TLS correlation, prefetch, lightweight mode, IP persistence)
 - **DNS advanced stealth (4 features)** : terminé (3rd-party burst, background noise, micro-burst, NXDOMAIN probes)
 - **Anti-DPI hardening (4+1 features)** : terminé (Range payload, ECH, streaming noise, IP persistence, ALPN)
-- **ALPN h2 bugfix critique** : `_build_default_context()` doit être http/1.1 only (aiohttp incompatible h2 framing)
+- **ALPN h2 bugfix (2 passes)** : 1) `_build_default_context()` http/1.1 only, 2) `get_rotated_ssl_context(include_h2=False)` default — rotated contexts via `profiles.py` passaient encore h2 à aiohttp
+- **Settings persistence fix** : `_save_settings({"features": data})` écrasait tout → remplacé par `_get_all_features_state()` qui sauvegarde l'état complet
+- **Dashboard cleanup** : Timing Heatmap + RPS History supprimés (HTML, CSS, JS)
 - **Tests** : 67 tests, tous verts, < 1s
 - **Fork** : github.com/amartidandqdq/noisy (forked from madereddy/noisy)
-- **⚠ dashboard_collector.py** : 501 lignes (god-object assumé, seule exception au max 180)
+- **⚠ dashboard_collector.py** : 556 lignes (god-object assumé, seule exception au max 180)
 
 ## Décisions clés
 
@@ -322,3 +328,6 @@ async def ma_fonction(x):
 | curl_cffi pour ECH | curl_cffi (BoringSSL) au lieu de ssl stdlib | Python ssl n'a aucun support ECH, curl_cffi négocie ECH nativement |
 | IP persistence | Stocker toutes les IPs mais retourner toujours la 1ère | Browsers font pareil — évite le round-robin churn détectable par DPI |
 | Range payload | GET+Range 4-12KB au lieu de HEAD 0-byte | HEAD sans payload = pattern scan détectable par DPI |
+| ALPN include_h2 param | `get_rotated_ssl_context(include_h2=False)` default | Rotated contexts passaient h2 à aiohttp via `profiles.py` → 2ème vague de 400 errors. `include_h2=True` uniquement dans raw sockets |
+| Settings full-state save | `_get_all_features_state()` au lieu de `data` partiel | Chaque clic écrasait les features sauvegardées avec 1 seule clé |
+| Dashboard sections retirées | Timing Heatmap + RPS History supprimés | Sections inutiles, alourdit l'UI sans valeur ajoutée |
