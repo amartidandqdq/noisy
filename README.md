@@ -1,170 +1,164 @@
 # Noisy
 
-[![CircleCI](https://circleci.com/gh/madereddy/noisy/tree/master.svg?style=shield)](https://circleci.com/gh/madereddy/noisy/tree/master)
-![Docker Pulls][pulls]
+**Noisy** is an async Python crawler that generates random HTTP/DNS traffic to mask your real browsing habits. It crawls the top 10,000 websites with realistic browser behaviour: randomised delays, diurnal activity patterns, per-domain rate limiting, and rotating user agents.
 
-[pulls]: https://img.shields.io/docker/pulls/madereddy/noisy
-
-**Noisy** is an async Python crawler that generates random HTTP/S traffic to mimic human browsing behaviour. It crawls top websites using dynamically refreshed, real user-agent strings, randomised delays, and per domain rate limiting making it useful for obfuscating real traffic patterns for privacy and testing purposes.
+Comes with a **real-time web dashboard** for monitoring all metrics live.
 
 ---
 
-## Features
+## Quick Start
 
-- Crawls up to 10,000 top sites sourced from [CrUX top lists](https://github.com/zakird/crux-top-lists), refreshed monthly.
-- Fetches and rotates real User-Agent strings weekly from [useragents.me](https://www.useragents.me).
-- Sends realistic browser headers (`Accept`, `Accept-Language`, `Cache-Control`, etc.) to reduce bot detection.
-- Mimics human browsing with randomised per request delays and per domain rate limiting.
-- Queue-based async architecture with configurable concurrency, connection pooling, and DNS caching.
-- Supports Brotli, gzip, and deflate response decompression.
-- Graceful shutdown on timeout or Ctrl+C.
+### Windows
 
----
+Double-click **`start.bat`** — it creates a virtual environment, installs dependencies, and launches with the dashboard.
 
-## Getting Started
+### macOS
 
-Clone the repository:
+Double-click **`start.command`** — same as above.
+
+### Manual
 
 ```bash
-git clone https://github.com/madereddy/noisy.git
+git clone https://github.com/amartidandqdq/noisy.git
 cd noisy
-```
-
-### Dependencies
-
-Install required Python packages:
-
-```bash
 pip install -r requirements.txt
+python noisy.py --dashboard
 ```
 
-`requirements.txt`:
-
-```
-aiohttp==3.13.3
-Brotli>=1.1.0
-```
-
-### Usage
-
-Run the crawler directly:
-
-```bash
-python noisy.py
-```
-
-All arguments are optional - the crawler fetches its own seed list and UA pool at startup.
-
-```
-$ python noisy.py --help
-usage: noisy.py [-h] [--log {debug,info,warning,error}] [--logfile LOGFILE]
-                [--threads THREADS] [--max_depth MAX_DEPTH]
-                [--min_sleep MIN_SLEEP] [--max_sleep MAX_SLEEP]
-                [--domain_delay DOMAIN_DELAY]
-                [--total_connections TOTAL_CONNECTIONS]
-                [--connections_per_host CONNECTIONS_PER_HOST]
-                [--keepalive_timeout KEEPALIVE_TIMEOUT]
-                [--crux_refresh_days CRUX_REFRESH_DAYS]
-                [--ua_refresh_days UA_REFRESH_DAYS]
-                [--max_queue_size MAX_QUEUE_SIZE]
-                [--timeout TIMEOUT]
-
-options:
-  -h, --help                    Show this help message and exit
-  --log                         Logging level (debug, info, warning, error). Default: info
-  --logfile LOGFILE             Optional path to write logs to a file
-
-  --threads THREADS             Number of concurrent crawlers. Default: 50
-  --max_depth MAX_DEPTH         Maximum link depth per crawl. Default: 5
-
-  --min_sleep MIN_SLEEP         Minimum sleep between requests (seconds). Default: 2.0
-  --max_sleep MAX_SLEEP         Maximum sleep between requests (seconds). Default: 15.0
-  --domain_delay DOMAIN_DELAY   Minimum delay between requests to the same domain (seconds). Default: 5.0
-
-  --total_connections           Total connection pool size. Default: 200
-  --connections_per_host        Max connections per host. Default: 10
-  --keepalive_timeout           Keep-alive timeout (seconds). Default: 30
-
-  --crux_refresh_days           How often to refresh the CrUX site list (days). Default: 31
-  --ua_refresh_days             How often to refresh the UA pool from useragents.me (days). Default: 7
-
-  --max_queue_size              Maximum URL queue size. Default: 100,000
-  --timeout TIMEOUT             Stop crawler after N seconds. Default: run forever
-```
-
-### Output
-
-```
-INFO - Fetching CRUX top sites...
-INFO - Loaded 10000 CRUX sites
-INFO - Fetching user agents from useragents.me...
-INFO - Loaded 50 user agents
-DEBUG - Visited: https://www.google.com
-DEBUG - Visited: https://www.wikipedia.org
-DEBUG - Fetch failed https://example.com: 403, message='Forbidden'
-DEBUG - Visited: https://www.reddit.com
-INFO - UA pool refreshed (50 agents)
-INFO - CRUX refresh complete
-```
-
-Log levels:
-- `INFO` — background refresh events
-- `WARNING` — UA pool refresh failure
-- `DEBUG` — visited URLs, fetch errors (403s, timeouts, connection failures), and internal aiohttp request detail
+Open **http://localhost:8080** to view the dashboard.
 
 ---
 
-### Docker
+## Dashboard
 
-Pull and run the container:
-
-```bash
-docker run -it madereddy/noisy
-```
-
-Pass arguments directly:
+Launch with `--dashboard` to get a real-time web interface:
 
 ```bash
-docker run -it madereddy/noisy --threads 25 --min_sleep 3 --max_sleep 10
+python noisy.py --dashboard
 ```
 
-Or use Docker Compose:
+### Features
 
-```yaml
-services:
-  noisy:
-    image: madereddy/noisy:latest
-    container_name: noisy
-    restart: always
+| Category | Feature |
+|----------|---------|
+| **Metrics** | Visited, failed, RPS, queued, unique URLs, active domains, bandwidth |
+| **Error breakdown** | 4xx (client) / 5xx (server) / network errors per user |
+| **Live log** | Scrolling feed of recent requests with status codes |
+| **Top domains** | Ranked by traffic with health score bars |
+| **TLD distribution** | Geo-diversity chart (.com, .fr, .jp, etc.) |
+| **Diurnal curve** | 24h activity model with current position marker |
+| **Stealth score** | Traffic fingerprint analysis (domain diversity, timing variance) |
+| **Controls** | Pause/resume crawling, dark/light theme toggle |
+| **Config editor** | Change sleep, depth, domain delay live without restart |
+| **Export** | Download full metrics snapshot as JSON |
+| **Alerts** | Banner when failure rate exceeds threshold |
+| **Prometheus** | `/metrics` endpoint for Grafana integration |
+| **Webhooks** | POST notifications on pause/resume/alert events |
+
+---
+
+## CLI Options
+
+```bash
+python noisy.py [OPTIONS]
 ```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--dashboard` | off | Enable real-time web dashboard |
+| `--dashboard-port` | 8080 | Dashboard port |
+| `--dashboard-host` | 127.0.0.1 | Dashboard bind address |
+| `--num_users` | 5 | Virtual users (parallel crawlers) |
+| `--threads` | 10 | Concurrent fetches per user |
+| `--max_depth` | 5 | Max link depth per crawl |
+| `--min_sleep` | 2 | Min delay between requests (s) |
+| `--max_sleep` | 15 | Max delay between requests (s) |
+| `--domain_delay` | 5.0 | Min delay per domain (s) |
+| `--crux_count` | 10000 | Number of top sites to crawl |
+| `--dns_workers` | 3 | DNS noise workers |
+| `--post-noise-workers` | 1 | HTTP HEAD noise workers |
+| `--timeout` | none | Stop after N seconds |
+| `--webhook-url` | none | Webhook URL for alerts |
+| `--config` | none | JSON config file (CLI overrides) |
+| `--dry-run` | off | Show config without crawling |
+| `--validate-config` | off | Validate config and exit |
+
+---
+
+## Architecture
+
+```
+noisy.py                  Entry point + orchestration (130 lines)
+noisy_lib/
+  config.py               All constants (65 lines)
+  config_loader.py        CLI parser + validation + JSON loader (105 lines)
+  structures.py           LRUSet / BoundedDict / TTLDict (90 lines)
+  profiles.py             UserProfile / UAPool / diurnal model (120 lines)
+  extractor.py            HTML link extraction + blacklist (45 lines)
+  fetchers.py             Fetch CRUX sites + user agents (100 lines)
+  rate_limiter.py         Per-domain rate limiting (55 lines)
+  fetch_client.py         HTTP GET with exponential retry (75 lines)
+  crawler.py              UserCrawler + SharedMetrics (310 lines)
+  workers.py              DNS noise / stats / UA refresh / HEAD noise (125 lines)
+  dashboard.py            FastAPI + WebSocket dashboard server (280 lines)
+  static/dashboard.html   Single-file dashboard UI (500 lines)
+```
+
+Each file has a 3-line header: purpose, inputs/outputs, and call graph.
 
 ---
 
 ## How It Works
 
-On startup, Noisy:
-1. Fetches the CrUX top 10,000 sites list and primes the URL queue
-2. Fetches 50 real UA strings from useragents.me
-3. Spawns N concurrent async worker coroutines (default: 50)
+1. Fetches the **CrUX top 10,000 sites** and primes each user's queue
+2. Fetches **real user agents** from useragents.me (refreshed weekly)
+3. Spawns N virtual users, each crawling independently with:
+   - Randomised delays scaled by a **diurnal activity model** (less traffic at night)
+   - **Per-domain rate limiting** shared across all users
+   - **Domain health scoring** — auto-deprioritizes domains with high failure rates
+   - URL **blacklist** applied before fetch and after link extraction
+   - Exponential **retry on 5xx/network errors** (not on 4xx)
+4. Background workers generate **DNS resolution noise** and **HTTP HEAD noise**
+5. Stats reported every 60s to console; dashboard pushes via WebSocket every 2s
 
-Each worker:
-- Pulls a URL from the queue
-- Waits for the per domain rate limit window
-- Sends a request with a randomly selected UA and realistic browser headers
-- Extracts links from the response and enqueues them up to `max_depth`
-- Sleeps for a random interval before the next request
+---
 
-In the background:
-- The CrUX list is refreshed every 31 days
-- The UA pool is refreshed every 7 days from useragents.me
+## Docker
+
+```bash
+docker build -t noisy .
+docker run -it noisy --dashboard --dashboard-host 0.0.0.0
+```
+
+Docker Compose:
+
+```yaml
+services:
+  noisy:
+    build: .
+    ports:
+      - "8080:8080"
+    command: --dashboard --dashboard-host 0.0.0.0
+    restart: always
+```
+
+---
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/ -v    # 67 tests, <1s
+```
 
 ---
 
 ## Authors
 
 - [**Itay Hury**](https://github.com/1tayH) — *Initial work*
-- [**madereddy**](https://github.com/madereddy) — *Docker build + Python upgrade* 
+- [**madereddy**](https://github.com/madereddy) — *Docker build + Python upgrade*
 - [**B3CKDOOR**](https://github.com/B3CKDOOR) — *Bugfixes*
+- [**amartidandqdq**](https://github.com/amartidandqdq) — *Modular refactoring, dashboard, security audit*
 
 ## License
 
@@ -172,4 +166,4 @@ This project is licensed under the GNU GPLv3 License — see the [LICENSE](LICEN
 
 ## Acknowledgments
 
-Inspired by [1tayH/noisy](https://github.com/1tayH/noisy).
+Inspired by [1tayH/noisy](https://github.com/1tayH/noisy). Forked from [madereddy/noisy](https://github.com/madereddy/noisy).
