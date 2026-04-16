@@ -28,6 +28,7 @@ async def _stream_session(
 ) -> int:
     """Maintient une connexion longue et telecharge en chunks. Retourne bytes total."""
     total_bytes = 0
+    writer = None
     try:
         ssl_ctx = get_rotated_ssl_context(rng, include_h2=True)
         reader, writer = await asyncio.wait_for(
@@ -62,11 +63,15 @@ async def _stream_session(
                 break
             # Delai inter-chunk (simule player video qui buffer)
             await asyncio.sleep(rng.uniform(*STREAM_CHUNK_DELAY))
-
-        writer.close()
-        await writer.wait_closed()
     except Exception as e:
         log.debug(f"[STREAM] session error host={host}: {e}")
+    finally:
+        if writer is not None:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
     return total_bytes
 
 

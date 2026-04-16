@@ -114,10 +114,13 @@ def _build_crawlers(args, top_sites, history_urls, schedule, geo_list,
     desktop_uas = ua_pool.sample(n_desktop, rng=_rng)
     mobile_uas = [_rng.choice(MOBILE_UA_POOL) for _ in range(n_mobile)]
 
+    from noisy_lib.profiles import is_mobile_ua
     crawlers: List[UserCrawler] = []
     for i in range(args.num_users):
-        is_mobile = i >= n_desktop
-        ua = mobile_uas[i - n_desktop] if is_mobile else desktop_uas[i]
+        slot_mobile = i >= n_desktop
+        ua = mobile_uas[i - n_desktop] if slot_mobile else desktop_uas[i]
+        # Truth comes from the UA, not the slot — pool may contain mobile UAs
+        is_mobile = slot_mobile or is_mobile_ua(ua)
         geo = _rng.choice(geo_list) if geo_list else None
         profile = UserProfile(
             user_id=i, ua=ua, rng=random.Random(_rng.random()),

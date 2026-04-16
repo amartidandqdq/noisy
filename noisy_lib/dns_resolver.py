@@ -5,6 +5,7 @@
 import asyncio
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Tuple
 
 import dns.resolver
@@ -15,6 +16,10 @@ log = logging.getLogger(__name__)
 
 # Cleanup interval (seconds)
 _CLEANUP_INTERVAL = 300
+
+# Dedicated DNS thread pool — burst workers fire 30-60 parallel resolves;
+# default executor (32 threads) is shared with all blocking I/O. Avoid starvation.
+_DNS_EXECUTOR = ThreadPoolExecutor(max_workers=64, thread_name_prefix="dns-resolver")
 
 
 class DnsCache:
@@ -51,9 +56,9 @@ class DnsCache:
 
         # Cache miss or expired — actual DNS query
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             answer = await loop.run_in_executor(
-                None, self._do_resolve, domain
+                _DNS_EXECUTOR, self._do_resolve, domain
             )
             if answer is None:
                 return None
@@ -93,8 +98,8 @@ class DnsCache:
         """Resout un domaine qui DOIT retourner NXDOMAIN. True = NXDOMAIN recu (normal).
         Pas de cache — le but est de generer la requete DNS."""
         try:
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self._do_nxdomain_probe, domain)
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(_DNS_EXECUTOR, self._do_nxdomain_probe, domain)
         except Exception:
             return False
 

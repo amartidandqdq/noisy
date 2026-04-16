@@ -12,9 +12,9 @@ Comes with a **real-time web dashboard** for monitoring all metrics live.
 
 Double-click **`start.bat`** — it creates a virtual environment, installs dependencies, and launches with the dashboard.
 
-### macOS
+### macOS / Linux
 
-Double-click **`start.command`** — same as above.
+Run **`./start.sh`** — same as above (creates venv, installs deps, launches with dashboard).
 
 ### Manual
 
@@ -37,29 +37,20 @@ Launch with `--dashboard` to get a real-time web interface:
 python noisy.py --dashboard
 ```
 
-### Features
+### Layout
 
-| Category | Feature |
-|----------|---------|
-| **Metrics** | Visited, failed, RPS, queued, unique URLs, active domains, bandwidth |
-| **Error breakdown** | 4xx (client) / 5xx (server) / network errors per user |
-| **Live log** | Scrolling feed of recent requests with status codes |
-| **Top domains** | Ranked by traffic with health score bars |
-| **TLD distribution** | Geo-diversity chart (.com, .fr, .jp, etc.) |
-| **Diurnal curve** | 24h activity model with current position marker |
-| **Stealth score** | Traffic fingerprint analysis (domain diversity, timing variance) |
-| **Domain categories** | 11 categories (news, social, tech, ecommerce, etc.) with colored bars |
-| **Controls** | Pause/resume, dark/light theme, add/remove users dynamically |
-| **Config editor** | Change sleep, depth, domain delay live without restart |
-| **Feature toggles** | Schedule, geo, mobile, search, auto-pause, diurnal — click on/off |
-| **TLD/Region filter** | Region checkboxes + custom TLD, applied live |
-| **Blocklist info** | OISD NSFW (404K) + phishing (362K) domains blocked |
-| **Export/Import** | Save/load config JSON + export metrics snapshot |
-| **Settings persistence** | `.noisy_settings.json` auto-saved, restored on restart |
-| **Alerts** | Banner when failure rate exceeds threshold |
-| **Auto-pause** | Auto-pause if fail% > 50% after 50+ requests |
-| **Prometheus** | `/metrics` endpoint for Grafana integration |
-| **Webhooks** | POST notifications on pause/resume/alert events |
+Sidebar with 6 tabs (keyboard shortcuts `1`-`6`, `P` pause, `T` theme, `D` dense mode):
+
+| Tab | Content |
+|-----|---------|
+| **Live** | Aggregate metrics, error breakdown (4xx/5xx/net), stealth score, diurnal curve, fingerprint detail |
+| **Users** | Virtual users table + Quick Settings (schedule/geo/mobile/search) + Runtime Config + TLD/Region Filter |
+| **Stealth** | Feature toggles (12+ switches grouped by Core / DNS / Anti-DPI), auto-saved on click |
+| **DNS** | System resolver, OISD blocklist count, DNS stealth status |
+| **Domains** | Top 20 by traffic with health bars, TLD distribution chart, 11 colored category bars |
+| **Logs** | Live request log (50 latest), recent errors panel |
+
+Plus: pause/resume, dark/light theme, +/- users dynamiquement, settings export/import, Prometheus `/metrics`, webhook POST on pause/resume/alert events, settings persistence (`.noisy_settings.json`), auto-pause when fail% > 50%.
 
 ---
 
@@ -141,9 +132,12 @@ noisy_lib/
   dns_stealth.py             3rd-party burst, background noise, micro-burst, NXDOMAIN (163 lines)
   ech_client.py              Encrypted Client Hello probe via curl_cffi (66 lines)
   stream_noise.py            Streaming CDN simulation with chunked downloads (101 lines)
-  dashboard_collector.py     MetricsCollector + settings persistence (556 lines)
-  dashboard.py               FastAPI routes + WebSocket + webhook (198 lines)
-  static/dashboard.html      Single-file dashboard UI
+  dashboard_collector.py     MetricsCollector + settings persistence (~575 lines)
+  dashboard.py               FastAPI routes + WebSocket + webhook + mount /css /js (200 lines)
+  static/index.html          Entry point + sidebar nav 6 tabs
+  static/css/main.css        Cyberpunk theme + responsive + dense mode + sidebar layout
+  static/js/app.js           Router (tabs) + WS + REST + keyboard shortcuts (1-6, P, T, D)
+  static/js/ui.js            Render functions per section
 ```
 
 Each file has a 3-line header: purpose, inputs/outputs, and call graph.
@@ -157,7 +151,7 @@ Each file has a 3-line header: purpose, inputs/outputs, and call graph.
 3. Downloads **OISD blocklists** (766K+ NSFW/phishing domains) and filters them out
 4. Spawns N virtual users, each crawling independently with:
    - **TLS fingerprint rotation** (JA3 diversity) — 6 cipher suite orderings, rotated every 15–60 min
-   - **Realistic click depth** — 60% bounce, 25% short (2-3 pages), 15% deep browse
+   - **Realistic click depth** — bounce 50–70% / short 20–30% / deep remainder, re-rolled per session
    - **Referer chain simulation** — 40% search engine, 30% direct, 20% social, 10% cross-site
    - **Static asset fetching** — 2-5 images/CSS/JS per page with Range headers
    - **Bandwidth throttling** — token bucket (fiber/4G/ADSL) per user
@@ -216,7 +210,7 @@ services:
 
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/ -v    # 67 tests, <1s
+python -m pytest tests/ -v    # 76 tests, <1s
 ```
 
 ---

@@ -7,11 +7,11 @@ import logging
 import random
 import string
 import time
-from typing import List, Optional
+from typing import List
 
 from .config import (
     BACKGROUND_APP_DOMAINS, BACKGROUND_MAX_SLEEP, BACKGROUND_MIN_SLEEP,
-    BURST_INTRA_DELAY, BURST_SILENCE_MAX, BURST_SILENCE_MIN,
+    BURST_SILENCE_MAX, BURST_SILENCE_MIN,
     BURST_SIZE_MAX, BURST_SIZE_MIN,
     CAPTIVE_PORTAL_DOMAINS, CAPTIVE_PORTAL_INTERVAL,
     NXDOMAIN_PROBE_INTERVAL,
@@ -65,6 +65,8 @@ async def thirdparty_burst_worker(
         scale = 1.0 / max(0.1, _diurnal_weight(hour))
         await asyncio.sleep(rng.uniform(15, 60) * scale)
 
+    log.info(f"[FIN] thirdparty_burst | id={worker_id}")
+
 
 # ---- Worker 2 : Background App Noise ----
 
@@ -95,6 +97,8 @@ async def background_noise_worker(
         hour = lt.tm_hour + lt.tm_min / 60
         scale = 1.0 / max(0.1, _diurnal_weight(hour))
         await asyncio.sleep(rng.uniform(BACKGROUND_MIN_SLEEP, BACKGROUND_MAX_SLEEP) * scale)
+
+    log.info(f"[FIN] background_noise | id={worker_id}")
 
 
 # ---- Worker 3 : Micro-Burst ----
@@ -141,6 +145,8 @@ async def microburst_worker(
         scale = 1.0 / max(0.1, _diurnal_weight(hour))
         silence = rng.uniform(BURST_SILENCE_MIN, BURST_SILENCE_MAX) * scale
         await asyncio.sleep(silence)
+
+    log.info(f"[FIN] microburst | id={worker_id}")
 
 
 # ---- Worker 4 : NXDOMAIN Probes + Captive Portal ----

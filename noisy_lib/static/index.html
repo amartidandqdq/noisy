@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NOISY // Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/main.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sb-head">
+      <div class="logo">NOISY</div>
+      <div class="sb-status"><span class="dot" id="dot"></span><span id="statusText">connecting</span></div>
+    </div>
+    <nav class="sb-nav" id="sbNav">
+      <div class="sb-item active" data-tab="live"><span>Live</span><span class="sb-key">1</span></div>
+      <div class="sb-item" data-tab="users"><span>Users</span><span class="sb-key">2</span></div>
+      <div class="sb-item" data-tab="stealth"><span>Stealth</span><span class="sb-key">3</span></div>
+      <div class="sb-item" data-tab="dns"><span>DNS</span><span class="sb-key">4</span></div>
+      <div class="sb-item" data-tab="domains"><span>Domains</span><span class="sb-key">5</span></div>
+      <div class="sb-item" data-tab="logs"><span>Logs</span><span class="sb-key">6</span></div>
+    </nav>
+    <div class="sb-foot">
+      <div>uptime: <span id="uptime">00:00:00</span></div>
+      <div>last: <span id="lastUpdate">-</span></div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <!-- TOPBAR -->
+    <div class="topbar">
+      <div class="tb-title"><b id="tbCurrentTab">LIVE</b><span id="tbHint">aggregate metrics</span></div>
+      <div class="tb-actions">
+        <span class="uptime">UP <span id="uptimeMini">00:00:00</span></span>
+        <div class="btn-group">
+          <button class="btn" id="btnPause" onclick="togglePause()">pause</button>
+          <button class="btn" onclick="addUser()" title="Add virtual user">+ user</button>
+          <button class="btn" onclick="removeUser()" title="Remove last virtual user">- user</button>
+          <button class="btn" id="btnTheme" onclick="toggleTheme()">light</button>
+          <button class="btn" id="btnDense" onclick="toggleDense()">dense</button>
+          <button class="btn" onclick="exportMetrics()">export</button>
+          <button class="btn" onclick="exportSettings()">save cfg</button>
+          <button class="btn" onclick="document.getElementById('importFile').click()">load cfg</button>
+          <input type="file" id="importFile" accept=".json" style="display:none" onchange="importSettings(this)">
+        </div>
+      </div>
+    </div>
+
+    <div class="alert-banner" id="alertBanner">
+      <span>&#x26a0;</span> <span>high failure rate detected</span>
+    </div>
+
+    <!-- TAB: LIVE -->
+    <section class="tab active" id="tab-live">
+      <div class="grid">
+        <div class="card"><div class="card-label">Visited</div><div class="card-value" id="visited">-</div><div class="spark" id="visitedSpark"></div></div>
+        <div class="card"><div class="card-label">Failed</div><div class="card-value fail" id="failed">-</div><div class="card-sub" id="failPct">0%</div>
+          <div class="err-breakdown">
+            <span class="err-tag c4">4xx <span id="c4">0</span></span>
+            <span class="err-tag c5">5xx <span id="c5">0</span></span>
+            <span class="err-tag cn">net <span id="cn">0</span></span>
+          </div>
+        </div>
+        <div class="card"><div class="card-label">Req/s</div><div class="card-value info" id="rps">-</div><div class="spark" id="rpsSpark"></div></div>
+        <div class="card"><div class="card-label">Queued</div><div class="card-value warn" id="queued">-</div></div>
+        <div class="card"><div class="card-label">Unique URLs</div><div class="card-value" id="uniqueUrls">-</div></div>
+        <div class="card"><div class="card-label">Domains</div><div class="card-value" id="activeDomains">-</div></div>
+        <div class="card"><div class="card-label">Bandwidth</div><div class="card-value purple" id="bw">-</div><div class="card-sub" id="bwTotal">0 MB</div></div>
+        <div class="card"><div class="card-label">Stealth Score</div><div class="card-value" id="fpScore">-</div>
+          <div class="fp-bar-wrap"><div class="fp-bar"><div class="fp-fill" id="fpFill"></div></div><span class="card-sub" id="fpLabel">-</span></div>
+        </div>
+      </div>
+
+      <div class="sections">
+        <div class="section">
+          <div class="sec-head"><span class="sec-title">Diurnal Activity</span><span class="sec-line"></span></div>
+          <div class="sec-box">
+            <svg class="diurnal-svg" id="diurnalSvg" viewBox="0 0 240 80" preserveAspectRatio="none"></svg>
+            <div class="graph-labels"><span>0h</span><span>activity model (24h)</span><span>23h</span></div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="sec-head"><span class="sec-title">Stealth Analysis</span><span class="sec-line"></span></div>
+          <div class="sec-box" id="fpDetail"><div class="no-data">waiting...</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: USERS -->
+    <section class="tab" id="tab-users">
+      <div class="grid">
+        <div class="card"><div class="card-label">Users</div><div class="card-value info" id="userCount">-</div><div class="card-sub" id="userBreakdown">-</div></div>
+      </div>
+
+      <div class="sections cols-1" style="margin-bottom:16px">
+        <div class="section">
+          <div class="sec-head"><span class="sec-title">Virtual Users</span><span class="sec-line"></span></div>
+          <div class="sec-box tall">
+            <table>
+              <thead><tr>
+                <th>ID</th><th>Type</th><th>Geo</th><th>Status</th><th>Visited</th><th>Failed</th>
+                <th>4xx</th><th>5xx</th><th>Net</th><th>Queued</th><th>Data</th><th>Activity</th><th>User Agent</th>
+              </tr></thead>
+              <tbody id="usersBody"><tr><td colspan="13" class="no-data">waiting...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="sections">
+        <div class="section">
+          <div class="sec-head"><span class="sec-title">Quick Settings</span><span class="sec-line"></span></div>
+          <div class="sec-box">
+            <div class="config-grid">
+              <div class="cfg-field"><label class="cfg-label">Schedule (ex: 8-23)</label><input class="cfg-input" id="featSchedule" type="text" placeholder="off"></div>
+              <div class="cfg-field"><label class="cfg-label">Geo profile</label><select class="cfg-input" id="featGeo"><option value="">off</option></select></div>
+              <div class="cfg-field"><label class="cfg-label">Mobile ratio (0-1)</label><input class="cfg-input" id="featMobile" type="number" step="0.1" min="0" max="1" value="0.3"></div>
+              <div class="cfg-field"><label class="cfg-label">Search workers</label><input class="cfg-input" id="featSearch" type="number" step="1" min="0" max="10" value="0"></div>
+              <div class="cfg-field" style="grid-column:1/-1"><span class="card-sub" id="featStatus"></span></div>
+            </div>
+            <button class="cfg-btn" onclick="applyFeatures()">Apply</button>
+            <button class="cfg-btn ghost" onclick="resetFeatures()" style="margin-top:4px">Reset</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="sec-head"><span class="sec-title">Runtime Config</span><span class="sec-line"></span></div>
+          <div class="sec-box">
+            <div class="config-grid">
+              <div class="cfg-field"><label class="cfg-label">Min Sleep (s)</label><input class="cfg-input" id="cfgMinSleep" type="number" step="0.5"></div>
+              <div class="cfg-field"><label class="cfg-label">Max Sleep (s)</label><input class="cfg-input" id="cfgMaxSleep" type="number" step="0.5"></div>
+              <div class="cfg-field"><label class="cfg-label">Max Depth</label><input class="cfg-input" id="cfgMaxDepth" type="number" step="1"></div>
+              <div class="cfg-field"><label class="cfg-label">Domain Delay (s)</label><input class="cfg-input" id="cfgDomainDelay" type="number" step="0.5"></div>
+              <div class="cfg-field"><label class="cfg-label">Links/Page</label><input class="cfg-input" id="cfgMaxLinks" type="number" step="5"></div>
+              <div class="cfg-field" style="display:flex;align-items:flex-end"><span class="card-sub" id="cfgStatus"></span></div>
+              <button class="cfg-btn" onclick="applyConfig()">Apply Changes</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="section full">
+          <div class="sec-head"><span class="sec-title">TLD / Region Filter</span><span class="sec-line"></span></div>
+          <div class="sec-box">
+            <div class="tld-filter-grid" id="regionCheckboxes"></div>
+            <div class="tld-custom"><input type="text" id="customTlds" placeholder="TLD personnalisés (ex: fr,de,uk)"></div>
+            <button class="cfg-btn" onclick="applyTldFilter()">Apply Filter</button>
+            <div class="tld-active" id="tldStatus"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: STEALTH -->
+    <section class="tab" id="tab-stealth">
+      <div class="sections cols-1">
+        <div class="section">
+          <div class="sec-head">
+            <span class="sec-title">Feature Toggles</span><span class="sec-line"></span>
+            <span class="card-sub" style="margin-left:8px">click to toggle (auto-save)</span>
+          </div>
+          <div class="sec-box tall">
+            <div class="feat-list" id="featToggles"><div class="no-data">waiting...</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: DNS -->
+    <section class="tab" id="tab-dns">
+      <div class="grid">
+        <div class="card"><div class="card-label">Resolver</div><div class="card-value info" id="dnsServer" style="font-size:14px">-</div><div class="card-sub" id="dnsExtra"></div></div>
+        <div class="card"><div class="card-label">Blocklist</div><div class="card-value" id="nsfwCount">-</div><div class="card-sub">nsfw + phishing</div></div>
+      </div>
+      <div class="sections cols-1">
+        <div class="section">
+          <div class="sec-head"><span class="sec-title">DNS Stealth Status</span><span class="sec-line"></span></div>
+          <div class="sec-box" id="dnsStealthInfo">
+            <div class="card-sub" style="line-height:1.6">
+              DNS stealth toggles vivent dans <b style="color:var(--accent)">Stealth → Feature Toggles</b>.<br>
+              Active : <span id="dnsActiveList">-</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: DOMAINS -->
+    <section class="tab" id="tab-domains">
+      <div class="sections">
+        <div class="section">
+          <div class="sec-head">
+            <span class="sec-title">Top Domains</span><span class="sec-line"></span>
+            <button class="btn" onclick="clearStats()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button>
+          </div>
+          <div class="sec-box" id="topDomains"><div class="no-data">waiting...</div></div>
+        </div>
+        <div class="section">
+          <div class="sec-head">
+            <span class="sec-title">TLD Distribution</span><span class="sec-line"></span>
+            <button class="btn" onclick="clearStats()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button>
+          </div>
+          <div class="sec-box" id="tldDist"><div class="no-data">waiting...</div></div>
+        </div>
+        <div class="section full">
+          <div class="sec-head"><span class="sec-title">Categories</span><span class="sec-line"></span></div>
+          <div class="sec-box" id="catDist"><div class="no-data">waiting...</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB: LOGS -->
+    <section class="tab" id="tab-logs">
+      <div class="sections">
+        <div class="section">
+          <div class="sec-head">
+            <span class="sec-title">Live Request Log</span><span class="sec-line"></span>
+            <button class="btn" onclick="clearLog()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button>
+          </div>
+          <div class="sec-box tall" id="liveLog"><div class="no-data">waiting...</div></div>
+        </div>
+        <div class="section">
+          <div class="sec-head">
+            <span class="sec-title">Recent Errors</span><span class="sec-line"></span>
+            <button class="btn" onclick="clearErrors()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button>
+          </div>
+          <div class="sec-box tall" id="errList"><div class="no-data">no errors</div></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/js/ui.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

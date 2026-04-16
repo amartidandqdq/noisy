@@ -7,39 +7,18 @@ Inclut un **dashboard temps réel** (FastAPI + WebSocket) pour monitorer toutes 
 
 ## Lancer
 ```bash
-python noisy.py                          # infini avec défauts
-python noisy.py --dashboard              # avec dashboard web sur :8080
-python noisy.py --dashboard --dashboard-port 9090
+python noisy.py --dashboard              # http://localhost:8080
 python noisy.py --dry-run                # voir config sans crawler
-python noisy.py --validate-config        # valider config et quitter
-python noisy.py --config config.json     # charger overrides JSON
-python noisy.py --num_users 3 --timeout 60 --webhook-url http://...
-python noisy.py --schedule 8-23          # actif 08h–23h seulement
-python noisy.py --geo europe_fr          # profil géo français
-python noisy.py --region europe          # filtre TLD européens
-python noisy.py --tld fr,de,es           # TLD spécifiques
-python noisy.py --mobile-ratio 0.4       # 40% users mobiles
-python noisy.py --search-workers 2       # bruit recherche Google/Bing
-python noisy.py --history-file urls.json # replay historique navigateur
-python noisy.py --prefetch-workers 2    # DNS prefetch depuis liens des pages
-python noisy.py --dns-optimized         # mode léger: Connection:close, 64KB max
-python noisy.py --thirdparty-burst      # burst DNS tiers (CDN/trackers/ads)
-python noisy.py --background-noise      # bruit apps background (NTP/Spotify/Steam)
-python noisy.py --nxdomain-probes       # probes NXDOMAIN Chrome + captive portal
-python noisy.py --ech                   # ECH via curl_cffi (masque SNI du FAI)
-python noisy.py --stream-noise          # simulation streaming vidéo (chunks CDN)
+python noisy.py --config config.json     # overrides JSON (legacy supporté)
 ```
+Flags principaux : `--num_users N`, `--schedule 8-23`, `--geo europe_fr`, `--region europe`, `--tld fr,de`, `--mobile-ratio 0.4`, `--search-workers 2`, `--history-file urls.json`. Stealth toggles : `--prefetch-workers N`, `--dns-optimized`, `--thirdparty-burst`, `--background-noise`, `--nxdomain-probes`, `--ech`, `--stream-noise`. Tous configurables live via dashboard.
 
-### Lancement rapide (non-dev)
-- **Windows** : double-clic `start.bat`
-- **macOS** : double-clic `start.command`
-
-Les deux créent un venv, installent les dépendances, et lancent avec `--dashboard`.
+**Lancement non-dev** : double-clic `start.bat` (Win), `./start.sh` (macOS/Linux). Crée venv + installe deps + lance avec `--dashboard`.
 
 ## Tests
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/ -v              # 67 tests, < 1s
+python -m pytest tests/ -v              # 76 tests, < 1s
 ```
 
 ## Règles de modularité (PROTECTED)
@@ -85,10 +64,15 @@ noisy_lib/
   ws_noise.py             → WebSocket/SSE idle connections bruit (113 lignes)
   traffic_mirror.py       → Miroir cache DNS + bruit proportionnel (161 lignes)
   dashboard_collector.py  → MetricsCollector + settings persistence (501 lignes)
-  dashboard.py            → FastAPI routes + WebSocket + webhook (198 lignes)
-  static/dashboard.html   → Single-file dashboard UI
+  dashboard.py            → FastAPI routes + WebSocket + webhook + mount /css /js (200 lignes)
+  static/index.html       → Entry point + sidebar nav 7 onglets (Live/Users/Stealth/DNS/Domains/Logs/Config)
+  static/css/main.css     → Theme cyberpunk + responsive + dense mode + sidebar layout
+  static/js/app.js        → Router (tabs) + WS + REST + keyboard shortcuts (1-7, P, T, D)
+  static/js/ui.js         → Render functions par section (renderLive/Users/Dns/Domains/Logs)
+  static/dashboard.legacy.html → Ancien single-file (archive, non servi)
 start.bat                 → Windows one-click launcher
-start.command             → macOS one-click launcher
+start.command             → macOS one-click launcher (a creer si besoin)
+start.sh                  → macOS/Linux one-click launcher (executable)
 ```
 
 ## Graphe de dépendances (DAG, pas de cycles)
@@ -139,6 +123,10 @@ config.py (feuille — 0 import noisy_lib)
 | Stats ou bruit DNS/HEAD/search | `workers.py` |
 | Dashboard routes / API | `dashboard.py` |
 | Dashboard métriques / features | `dashboard_collector.py` |
+| Dashboard layout / nav / styles | `static/css/main.css` |
+| Dashboard tab routing / shortcuts | `static/js/app.js` |
+| Dashboard render fonctions | `static/js/ui.js` |
+| Dashboard structure HTML / onglets | `static/index.html` |
 | Métriques agrégées cross-crawler | `metrics.py` (SharedMetrics) |
 | Blocklists OISD (NSFW/phishing) | `fetchers.py` + `config.py` (OISD URLs) |
 | Geo profiles / mobile UAs / fallback UAs | `config.py` (GEO_PROFILES, MOBILE_UA_POOL, UA_FALLBACK) |
@@ -165,29 +153,18 @@ config.py (feuille — 0 import noisy_lib)
 
 ## Dashboard — fonctionnalités
 
-| Catégorie | Détail |
-|-----------|--------|
-| Métriques | visited, failed, RPS, queued, unique URLs, active domains, bandwidth |
-| Erreurs | 4xx / 5xx / network errors par user, recent errors panel |
-| Live log | 50 dernières requêtes avec status codes + clear button |
-| Top domains | Top 20 par trafic avec health score + clear button |
-| TLD distribution | Chart geo-diversity (.com, .fr, .jp…) + clear button |
-| Domain categories | 11 catégories (news, social, tech, ecommerce…) avec barres colorées |
-| Diurnal curve | Modèle 24h avec marqueur position courante |
-| Stealth score | Fingerprint (domain diversity, TLD diversity, timing variance) |
-| Contrôles | Pause/resume, dark/light theme, +/- users dynamiques |
-| Config editor | min_sleep, max_sleep, depth, domain_delay live |
-| Features toggle | Schedule, geo, mobile, search, auto-pause, diurnal — tags cliquables on/off |
-| TLD/Region filter | Checkboxes régions + TLD custom, appliqué live |
-| Blocklist info | Compteur NSFW + phishing domaines bloqués (OISD) |
-| DNS info | Serveurs DNS système avec expandable list |
-| Export/Import | Save/Load config JSON + export métriques snapshot |
-| Settings persistence | .noisy_settings.json auto-saved, restauré au redémarrage |
-| Alertes | Bannière si fail% > seuil |
-| Auto-pause | Pause auto si fail% > 50% après 50+ requêtes |
-| Prometheus | `/metrics` endpoint texte pour Grafana |
-| Webhooks | POST sur pause/resume/alert events |
-| Health check | Vérification connexion internet au démarrage |
+Sidebar 6 onglets (raccourcis 1-6, P pause, T theme, D dense) :
+
+| Onglet | Contenu |
+|--------|---------|
+| **Live** | Métriques (visited/failed/RPS/queued/bw), 4xx/5xx/net errors, stealth score, diurnal curve, fingerprint detail |
+| **Users** | Table virtual users + Quick Settings (schedule/geo/mobile/search) + Runtime Config + TLD/Region filter |
+| **Stealth** | Feature toggles (12+ switches groupés Core/DNS/Anti-DPI), auto-save on click |
+| **DNS** | Resolver système, blocklist count (OISD NSFW+phishing 766K), DNS stealth status |
+| **Domains** | Top 20 + health score, TLD distribution, 11 catégories couleurs |
+| **Logs** | Live request log (50 derniers), recent errors panel |
+
+Endpoints externes : `/metrics` (Prometheus), webhooks POST (pause/resume/alert), `/api/export` (snapshot JSON).
 
 ## Classes clés
 
@@ -227,6 +204,12 @@ async def ma_fonction(x):
 - **ALPN h2 + aiohttp = crash** : `get_rotated_ssl_context()` est appelé par `profiles.py` (→ aiohttp) ET par raw sockets. Ne JAMAIS mettre h2 en default. Utiliser `include_h2=True` uniquement dans workers/dns_prefetch/dns_stealth/stream_noise.
 - **`_save_settings({"features": data})` partiel** : `data` ne contient que la clé du dernier clic. Toujours sauvegarder via `_get_all_features_state()` pour l'état complet.
 - **`venv/.deps_installed` marker** : Empêche `start.bat` de réinstaller. Supprimer manuellement si on ajoute de nouvelles dépendances à `requirements.txt`.
+- **Socket leak TLS** : `await reader.read(...)` après `open_connection` peut throw, writer jamais fermé. Toujours `try/finally` avec `writer.close(); await writer.wait_closed()`. Sites concernés : `dns_prefetch.py`, `stream_noise.py`, `workers.py`.
+- **Browser cache dashboard** : `/` doit renvoyer `Cache-Control: no-cache, must-revalidate` sinon browser sert la vieille HTML inline. Headers déjà set dans `dashboard.py`.
+- **`is_mobile` flag != UA** : UA pool externe contient des UAs mobiles. Toujours dériver `is_mobile` de l'UA via `is_mobile_ua()` (`profiles.py`), pas du slot d'attribution.
+- **`add_user()` doit hériter** : geo, schedule, diurnal du `crawlers[0].profile`. Sinon nouveaux users par défaut sans config dashboard.
+- **`asyncio.get_event_loop()` deprecated** : Utiliser `get_running_loop()` dans toute coroutine. Removed in Python 3.14.
+- **Default thread pool exhaustion** : DNS resolves bloquants doivent passer par `_DNS_EXECUTOR` dédié (64 threads, `dns_resolver.py`), pas le default executor (32 threads partagés).
 
 ## Invariants clés (PROTECTED)
 - `DomainRateLimiter` est **partagé** entre tous les crawlers (cross-user rate limiting)
@@ -247,63 +230,36 @@ async def ma_fonction(x):
 - Cookie jar `unsafe=True` par crawler — simule persistance cookies cross-domain
 - Settings auto-sauvegardées dans `.noisy_settings.json` à chaque changement dashboard
 
-## Stealth features
+## Stealth features (groupées par couche)
 
-| Feature | Détail |
-|---------|--------|
-| TLS JA3 rotation | 6 cipher suite orderings, roté toutes 15-60min, `tls_profiles.py` |
-| Realistic depth | 60% bounce/25% short/15% deep, mobile cap=3, `depth_model.py` |
-| Referer chains | 40% search/30% direct/20% social/10% cross-site, `referer_chain.py` |
-| Asset fetching | 2-5 img/css/js par page, Range headers partiels, `asset_fetcher.py` |
-| Cookie persistence | Sérialisation JSON par user, `--cookie-persist`, `cookie_store.py` |
-| Bandwidth throttle | Token bucket (fiber/4G/ADSL/3G), auto-assign mobile/desktop, `throttle.py` |
-| WebSocket noise | 2-5 connexions idle (Binance/Kraken/Twitch), `--ws-workers`, `ws_noise.py` |
-| Traffic mirror | Observation cache DNS système, bruit proportionnel, `--mirror`, `traffic_mirror.py` |
-| Scheduler | Active hours `--schedule 8-23`, wrap-around supporté (22-6) |
-| Geo profiles | 21 locales (Accept-Language + tz_offset), `--geo europe_fr` |
-| Mobile sim | 10 mobile UAs, Sec-CH-UA-Mobile, depth réduit, `--mobile-ratio 0.3` |
-| Search noise | Requêtes Google/Bing/DDG/Yahoo avec mots aléatoires, suit 1-3 résultats |
-| Traffic replay | Import JSON/TXT historique navigateur, mixé avec CRUX |
-| Stealth headers | 15+ combos Accept/Cache/Sec-Fetch/DNT, rotation par session |
-| Fingerprint rotation | Accept/Cache/Sec-CH-UA + TLS cipher toutes 15-60min |
-| Diurnal activity | Modèle 24h réaliste (pic midi, creux nuit), toggle on/off |
-| Domain categories | 11 catégories (news, social, tech…), tracking + visualisation |
-| Auto-pause | Pause auto si fail% > 50% après 50+ requêtes |
-| OISD blocklists | NSFW (404K) + phishing/malware (362K) domaines bloqués |
-| TLD/Region filter | 6 régions prédéfinies + TLD custom, appliqué live |
-| Settings persistence | .noisy_settings.json restauré au redémarrage |
-| Connection health | Vérification internet au démarrage |
-| DNS TTL cache | dnspython résolution avec respect TTL, pas de re-query avant expiry, `dns_resolver.py` |
-| DNS→TCP→TLS correlation | Chaque DNS resolve suivi de TCP+TLS handshake réel avec payload, `workers.py` |
-| IP persistence | 1 IP par domaine pendant durée TTL (pas de round-robin churn), `dns_resolver.py` |
-| DNS prefetch | Extraction domaines depuis liens page, burst DNS+TCP+TLS (comme Chrome), `dns_prefetch.py` |
-| Mode léger (dns-optimized) | Connection:close, 64KB max body, 1 retry, skip assets, `fetch_client.py`+`crawler.py` |
-| 3rd-party burst | 8-25 CDN/tracker/ad domains résolus en parallèle par page (effet iceberg), `dns_stealth.py` |
-| Background app noise | NTP/Spotify/WhatsApp/Discord/Steam DNS bruit continu, `dns_stealth.py` |
-| Micro-bursting | 30-60 queries simultanées puis silence 10-120s (pattern humain), `dns_stealth.py` |
-| NXDOMAIN probes | Chrome intranet redirect detector + captive portal checks, `dns_stealth.py` |
-| Range payload anti-DPI | GET+Range 4-12KB réel au lieu de HEAD 0-byte (défait heuristiques DPI), `dns_prefetch.py` |
-| ALPN negotiation | h2+http/1.1 dans TLS raw sockets, http/1.1 only pour aiohttp, `tls_profiles.py` |
-| ECH | Encrypted Client Hello via curl_cffi/BoringSSL (masque SNI du FAI), `ech_client.py` |
-| Streaming noise | Connexions longues CDN vidéo, chunks 128-512KB avec délais (simule vidéo), `stream_noise.py` |
+Détails complets archivés dans `CLAUDE-Archive.md`. Référence rapide :
 
-## Statut projet
-- **Refactoring P0→P4** : terminé
-- **Code review + 8 bug fixes** : terminé
-- **Modularity audit + 6 refactors** : terminé
-- **9 nouvelles features stealth** : terminé (TLS JA3, depth model, referer chains, asset fetch, cookies, throttle, WS noise, traffic mirror, crawler split)
-- **Dashboard temps réel** : terminé (30+ fonctionnalités)
-- **Audit sécurité** : terminé (bind local, HEAD-only noise, input validation, URL scheme validation)
-- **3 bugfixes post-features** : `randint(2,1)` asset_fetcher, queue 4-tuple dashboard, features propagation collector
-- **DNS stealth layer (5 features)** : terminé (TTL cache, DNS→TCP→TLS correlation, prefetch, lightweight mode, IP persistence)
-- **DNS advanced stealth (4 features)** : terminé (3rd-party burst, background noise, micro-burst, NXDOMAIN probes)
-- **Anti-DPI hardening (4+1 features)** : terminé (Range payload, ECH, streaming noise, IP persistence, ALPN)
-- **ALPN h2 bugfix (2 passes)** : 1) `_build_default_context()` http/1.1 only, 2) `get_rotated_ssl_context(include_h2=False)` default — rotated contexts via `profiles.py` passaient encore h2 à aiohttp
-- **Settings persistence fix** : `_save_settings({"features": data})` écrasait tout → remplacé par `_get_all_features_state()` qui sauvegarde l'état complet
-- **Dashboard cleanup** : Timing Heatmap + RPS History supprimés (HTML, CSS, JS)
-- **Tests** : 67 tests, tous verts, < 1s
-- **Fork** : github.com/amartidandqdq/noisy (forked from madereddy/noisy)
-- **⚠ dashboard_collector.py** : 556 lignes (god-object assumé, seule exception au max 180)
+| Couche | Features | Fichiers |
+|--------|----------|----------|
+| **TLS / Fingerprint** | JA3 rotation (6 ciphers, 15-60min), stealth headers (Accept/Cache/Sec-CH-UA/DNT, 15+ combos), fingerprint rotation par session, ALPN h2+http1.1 (raw)/http1.1 (aiohttp) | `tls_profiles.py`, `profiles.py` |
+| **HTTP behavior** | Realistic depth (50-70/20-30/remainder), referer chains (40/30/20/10), asset fetching (2-5/page Range), cookie persist, bandwidth throttle (fiber/4G/ADSL/3G) | `depth_model.py`, `referer_chain.py`, `asset_fetcher.py`, `cookie_store.py`, `throttle.py` |
+| **Bruit fond** | WebSocket idle (2-5 conn), traffic mirror (DNS cache obs), HTTP noise HEAD-only, search noise (Google/Bing/DDG suit 1-3 résultats) | `ws_noise.py`, `traffic_mirror.py`, `workers.py` |
+| **DNS stealth** | TTL cache (dnspython, respect TTL), DNS→TCP→TLS correlation, IP persistence, DNS prefetch (extraction page links), mode léger dns-optimized | `dns_resolver.py`, `dns_prefetch.py`, `workers.py` |
+| **DNS advanced** | 3rd-party burst (8-25 CDN/tracker/page = effet iceberg), background noise (NTP/Spotify/Steam), micro-burst (30-60 sim. + silence), NXDOMAIN probes (Chrome intranet + captive) | `dns_stealth.py` |
+| **Anti-DPI** | Range payload 4-12KB (vs HEAD 0-byte), ECH curl_cffi/BoringSSL, streaming noise (long CDN keep-alive chunks 128-512KB) | `dns_prefetch.py`, `ech_client.py`, `stream_noise.py` |
+| **Modèle activité** | Diurnal 24h (pic midi/creux nuit), scheduler (`--schedule 8-23` wrap), geo profiles (21 locales), mobile sim (10 UAs, Sec-CH-UA-Mobile), traffic replay JSON | `profiles.py`, `config.py` |
+| **Filtrage / sécurité** | OISD blocklists (NSFW 404K + phishing 362K), TLD/Region filter (6 presets), URL blacklist substring, auto-pause fail%>50, connection health check | `fetchers.py`, `extractor.py`, `dashboard_collector.py` |
+| **UX dashboard** | Settings persistence (.noisy_settings.json), domain categories (11), live config edit, feature toggles checkbox, sidebar 6 tabs + raccourcis 1-6 | `dashboard_collector.py`, `static/` |
+
+## Statut projet (récents)
+
+Historique complet (P0→P4, 8+6+3+11 bugfixes, 9+5+4+5 features, ALPN/settings fixes, dashboard cleanup) → `CLAUDE-Archive.md`.
+
+| Phase | État | Date |
+|-------|------|------|
+| Anti-DPI hardening (Range, ECH, stream, ALPN, IP persist) | ✅ | 2026-04 |
+| Code review + 11 fixes (socket leak, get_running_loop, DNS executor) | ✅ | 2026-04-16 |
+| Dashboard refonte A+D (sidebar 6 tabs, split static/, shortcuts) | ✅ | 2026-04-16 |
+| Bug fixes UX (geo inherit, is_mobile_ua, depth fourchettes) | ✅ | 2026-04-16 |
+| Tests | 76 verts, < 1s | 2026-04-16 |
+
+- **Fork** : github.com/amartidandqdq/noisy (from madereddy/noisy)
+- **⚠ dashboard_collector.py** : ~575 lignes (god-object assumé, seule exception au max 180)
 
 ## Décisions clés
 
@@ -314,7 +270,7 @@ async def ma_fonction(x):
 | Blacklist URL | Double filtre : avant fetch + après extraction | Économise requêtes ET évite d'enqueue des URLs inutiles |
 | Domain locks | Bounded dict 50K + FIFO eviction | Évite memory leak sur longues sessions |
 | Config file | `--config` explicite, pas d'auto-load | Comportement prévisible |
-| Dashboard stack | FastAPI + WebSocket + vanilla HTML/CSS/JS | Pas de build step, un seul fichier HTML |
+| Dashboard stack | FastAPI + WebSocket + vanilla HTML/CSS/JS multi-files | Pas de build step, séparation logique sans dépendances |
 | Metrics catégorisation | 4xx/5xx/network séparés | Évite inflation artificielle du fail% (4xx ≠ panne) |
 | HTTP noise | HEAD only (pas POST) | Lecture seule, aucun effet secondaire sur les serveurs cibles |
 | Dashboard bind | 127.0.0.1 par défaut | Pas d'auth, donc pas d'exposition réseau |
@@ -322,12 +278,15 @@ async def ma_fonction(x):
 | Blocklist 2 niveaux | domain_blocklist (set) + url_blacklist (list) | O(1) pour 766K domaines OISD, substring pour patterns courts |
 | TLD generic passthrough | .com/.net/.org toujours inclus | Filtre TLD ne bloque pas les sites internationaux sur gTLD |
 | Settings persistence | JSON file, pas DB | Simple, portable, pas de dépendance |
-| Feature tags cliquables | Toggle on/off direct dans dashboard | UX rapide sans formulaire |
-| ALPN par contexte | http/1.1 only (aiohttp default), h2+http/1.1 (raw sockets rotated) | aiohttp ne supporte pas HTTP/2 framing → 400 sur tous les fetches si h2 négocié |
-| dnspython pour DNS | dnspython au lieu de stdlib getaddrinfo | getaddrinfo n'expose pas le TTL, indispensable pour cache TTL-aware |
-| curl_cffi pour ECH | curl_cffi (BoringSSL) au lieu de ssl stdlib | Python ssl n'a aucun support ECH, curl_cffi négocie ECH nativement |
-| IP persistence | Stocker toutes les IPs mais retourner toujours la 1ère | Browsers font pareil — évite le round-robin churn détectable par DPI |
-| Range payload | GET+Range 4-12KB au lieu de HEAD 0-byte | HEAD sans payload = pattern scan détectable par DPI |
-| ALPN include_h2 param | `get_rotated_ssl_context(include_h2=False)` default | Rotated contexts passaient h2 à aiohttp via `profiles.py` → 2ème vague de 400 errors. `include_h2=True` uniquement dans raw sockets |
-| Settings full-state save | `_get_all_features_state()` au lieu de `data` partiel | Chaque clic écrasait les features sauvegardées avec 1 seule clé |
-| Dashboard sections retirées | Timing Heatmap + RPS History supprimés | Sections inutiles, alourdit l'UI sans valeur ajoutée |
+| ALPN h2 | `include_h2=True` raw sockets only, http/1.1 default | aiohttp crash sur HTTP/2 framing |
+| dnspython vs getaddrinfo | dnspython | getaddrinfo n'expose pas le TTL |
+| curl_cffi pour ECH | BoringSSL via curl_cffi | Python ssl stdlib n'a aucun support ECH |
+| IP persistence | Stocker N IPs, retourner toujours la 1ère pendant TTL | Browsers font pareil, évite churn détectable |
+| Range payload anti-DPI | GET+Range 4-12KB au lieu de HEAD 0-byte | HEAD sans payload = pattern scan détectable |
+| Dashboard split fichiers | static/index.html + css/main.css + js/{app,ui}.js | Single 919-line ingérable, vanilla split sans build |
+| Sidebar nav 6 onglets | Live/Users/Stealth/DNS/Domains/Logs | Quick Settings + Config dans Users (related), pas de scroll géant |
+| Dedicated DNS executor | `ThreadPoolExecutor(64)` | Microburst 30-60 resolves saturent default pool (32) |
+| Cache-Control HTML | `no-cache, must-revalidate` sur `/` | Browser cache la vieille HTML sinon (StaticFiles a ETag pour CSS/JS) |
+| `is_mobile` dérivé UA | `is_mobile_ua(ua)` substring match, pas du slot | UA pool externe contient mobiles, slot ment |
+| `add_user()` hérite état | Copie geo/schedule/diurnal de `crawlers[0].profile` | Sinon ignore config dashboard |
+| Depth model fourchettes | `bounce uniform(0.5,0.7)` re-tiré par session | Probabilité fixe = pattern détectable |

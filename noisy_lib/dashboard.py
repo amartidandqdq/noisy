@@ -10,6 +10,7 @@ from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, PlainTextResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import (
     AUTO_PAUSE_FAIL_THRESHOLD, AUTO_PAUSE_MIN_REQUESTS,
@@ -28,11 +29,15 @@ log = logging.getLogger(__name__)
 def create_app(collector: MetricsCollector) -> FastAPI:
     app = FastAPI(title="Noisy Dashboard", docs_url=None, redoc_url=None)
 
-    _cached_html = (STATIC_DIR / "dashboard.html").read_text(encoding="utf-8")
+    _index_html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    app.mount("/css", StaticFiles(directory=str(STATIC_DIR / "css")), name="css")
+    app.mount("/js", StaticFiles(directory=str(STATIC_DIR / "js")), name="js")
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
-        return HTMLResponse(_cached_html)
+        # no-cache: HTML refs versioned/timestamped CSS/JS via StaticFiles ETag.
+        # Forces browser to refetch HTML on each visit, picking up any layout changes.
+        return HTMLResponse(_index_html, headers={"Cache-Control": "no-cache, must-revalidate"})
 
     @app.get("/api/metrics")
     async def metrics():

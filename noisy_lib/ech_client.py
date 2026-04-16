@@ -28,8 +28,10 @@ def is_ech_available() -> bool:
 
 
 async def ech_probe(host: str, rng: random.Random) -> bool:
-    """GET+Range via curl_cffi avec ECH active (impersonate Chrome).
-    Le SNI est chiffre si le serveur supporte ECH (Cloudflare etc.).
+    """GET+Range via curl_cffi en impersonate=chrome.
+    ECH n'est negocie QUE si (a) curl_cffi est link a une BoringSSL recente avec ECH,
+    ET (b) le serveur publie un ECHConfig via DNS HTTPS RR (ex: Cloudflare).
+    Sinon = TLS classique avec SNI en clair. Cette fonction ne verifie pas la negotiation.
     Retourne True si la requete a abouti."""
     if not is_ech_available():
         return False

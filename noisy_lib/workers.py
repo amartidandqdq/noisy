@@ -37,7 +37,7 @@ async def dns_noise_worker(
     """Bruit DNS avec correlation TCP+TLS+HEAD (SNI correct)."""
     log.info(f"[DEBUT] dns_noise_worker | id={worker_id} domains={len(domains)} correlated={dns_cache is not None}")
     rng = random.Random()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     while not stop_event.is_set():
         host = rng.choice(domains)
         # Skip si TTL encore valide — pas de requete DNS = pas de bruit reseau
@@ -65,6 +65,7 @@ async def dns_noise_worker(
             await asyncio.sleep(rng.uniform(min_sleep, max_sleep) * scale)
             continue
         # TCP + TLS handshake + HEAD (correlation DNS→TCP→SNI)
+        writer = None
         try:
             ssl_ctx = get_rotated_ssl_context(rng, include_h2=True)
             reader, writer = await asyncio.wait_for(
@@ -75,11 +76,16 @@ async def dns_noise_worker(
             writer.write(f"HEAD / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode())
             await writer.drain()
             await asyncio.wait_for(reader.read(4096), timeout=5)
-            writer.close()
-            await writer.wait_closed()
             log.debug(f"[DNS] correlated host={host} ip={ip}")
         except Exception:
             pass
+        finally:
+            if writer is not None:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
         lt = time.localtime()
         hour = lt.tm_hour + lt.tm_min / 60
         scale = 1.0 / max(0.1, _diurnal_weight(hour))

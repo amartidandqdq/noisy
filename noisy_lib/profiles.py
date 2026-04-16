@@ -67,6 +67,14 @@ _UA_FALLBACK = UA_FALLBACK
 SSL_CONTEXT = DEFAULT_SSL_CONTEXT
 
 
+_MOBILE_UA_TOKENS = ("Mobile", "iPhone", "iPad", "Android", "iPod", "Mobi", "Windows Phone")
+
+
+def is_mobile_ua(ua: str) -> bool:
+    """Detecte si un User-Agent est mobile (substring match)."""
+    return any(tok in ua for tok in _MOBILE_UA_TOKENS)
+
+
 def _diurnal_weight(hour: float) -> float:
     """Poids d'activité selon l'heure locale (0.05–1.0)."""
     t = (hour - 4) / 24 * 2 * math.pi

@@ -16,3 +16,8 @@ __pycache__/
 #OS
 .DS_Store
 Thumbs.db
+
+#Runtime
+.noisy_settings.json
+cookies/
+noisy_lib/static/dashboard.legacy.html

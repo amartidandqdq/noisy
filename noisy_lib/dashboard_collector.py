@@ -308,12 +308,35 @@ class MetricsCollector:
             return {"error": "parametres crawler non initialises"}
 
         from .crawler import UserCrawler
+        from .profiles import is_mobile_ua
         p = self._crawler_params
         uid = self._next_user_id
         self._next_user_id += 1
 
-        ua = self.ua_pool.sample(1, rng=random.Random())[0]
-        profile = UserProfile(user_id=uid, ua=ua, rng=random.Random())
+        # Inherit profile state from existing crawlers (geo, schedule, diurnal, mobile_ratio)
+        ref = self.crawlers[0].profile if self.crawlers else None
+        inherited_geo = ref.geo if ref else None
+        inherited_schedule = ref.schedule if ref else None
+        inherited_diurnal = ref.diurnal_enabled if ref else True
+
+        # Decide if new user should be mobile to maintain current ratio
+        n_mobile_now = sum(1 for c in self.crawlers if c.profile.is_mobile)
+        mobile_ratio = n_mobile_now / len(self.crawlers) if self.crawlers else 0
+        force_mobile = self.crawlers and (n_mobile_now / (len(self.crawlers) + 1)) < mobile_ratio
+
+        if force_mobile:
+            from .config import MOBILE_UA_POOL
+            ua = random.choice(MOBILE_UA_POOL)
+        else:
+            ua = self.ua_pool.sample(1, rng=random.Random())[0]
+
+        profile = UserProfile(
+            user_id=uid, ua=ua, rng=random.Random(),
+            geo=inherited_geo,
+            is_mobile=force_mobile or is_mobile_ua(ua),
+            schedule=inherited_schedule,
+        )
+        profile.diurnal_enabled = inherited_diurnal
         sites = list(self._filtered_sites)
         profile.rng.shuffle(sites)
 
@@ -427,6 +450,7 @@ class MetricsCollector:
 
         # Mobile ratio
         if "mobile_ratio" in data:
+            from .profiles import is_mobile_ua
             ratio = float(data["mobile_ratio"])
             if not (0 <= ratio <= 1):
                 return {"error": "mobile_ratio doit etre 0-1"}
@@ -434,8 +458,16 @@ class MetricsCollector:
             for i, c in enumerate(self.crawlers):
                 should_mobile = i >= (len(self.crawlers) - n_mobile)
                 c.profile.is_mobile = should_mobile
-                if should_mobile and "Mobile" not in c.profile.ua:
-                    c.profile.ua = random.choice(MOBILE_UA_POOL)
+                rng = getattr(c.profile, "rng", None) or random.Random()
+                if should_mobile and not is_mobile_ua(c.profile.ua):
+                    c.profile.ua = rng.choice(MOBILE_UA_POOL)
+                elif not should_mobile and is_mobile_ua(c.profile.ua):
+                    c.profile.ua = self.ua_pool.sample(1, rng=rng)[0]
+                    # If pool returned mobile, keep cycling up to 5 times
+                    for _ in range(5):
+                        if not is_mobile_ua(c.profile.ua):
+                            break
+                        c.profile.ua = self.ua_pool.sample(1, rng=rng)[0]
             changes.append(f"mobile={n_mobile}/{len(self.crawlers)}")
 
         # Search workers

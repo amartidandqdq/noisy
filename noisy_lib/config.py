@@ -126,13 +126,16 @@ CAPTIVE_PORTAL_INTERVAL = (600, 1800)  # 10-30 min entre checks portail
 PROBE_RANGE_MIN = 4096     # 4KB min Range payload
 PROBE_RANGE_MAX = 12288    # 12KB max Range payload
 
-# ---- STREAMING CDN (simulation video) ----
+# ---- STREAMING CDN (long-lived chunked GET — simule pattern streaming) ----
+# NOTE: les domaines "Generic CDN" ne sont pas video — ils servent a ouvrir
+# une connexion longue avec Range request. Le but est le pattern reseau
+# (chunks reguliers, keep-alive), pas le contenu video reel.
 STREAMING_CDN_DOMAINS = [
     # YouTube CDN (domaines generiques — les vrais ont des suffixes dynamiques)
     "redirector.googlevideo.com", "manifest.googlevideo.com",
     # Twitch
     "usher.ttvnw.net", "static.twitchcdn.net",
-    # Generic CDN (fallback fiable)
+    # Generic CDN — package CDN, sert juste a maintenir une connexion longue
     "cdn.jsdelivr.net", "cdnjs.cloudflare.com",
     "ajax.googleapis.com", "fonts.gstatic.com",
     "cdn.cloudflare.com", "unpkg.com",

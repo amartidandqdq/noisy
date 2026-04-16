@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 async def _tcp_tls_probe(ip: str, host: str, rng: random.Random, timeout: float = 10) -> bool:
     """TCP+TLS+GET avec Range payload (4-12KB) — anti-DPI. Retourne True si OK."""
+    writer = None
     try:
         ssl_ctx = get_rotated_ssl_context(rng, include_h2=True)
         reader, writer = await asyncio.wait_for(
@@ -46,11 +47,16 @@ async def _tcp_tls_probe(ip: str, host: str, rng: random.Random, timeout: float 
         await writer.drain()
         # Lire reponse reelle (headers + body Range) — DPI voit du payload
         await asyncio.wait_for(reader.read(range_end + 2048), timeout=timeout)
-        writer.close()
-        await writer.wait_closed()
         return True
     except Exception:
         return False
+    finally:
+        if writer is not None:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
 
 # Backward compat alias
@@ -59,6 +65,7 @@ _tcp_tls_head = _tcp_tls_probe
 
 async def _fetch_page_lightweight(ip: str, host: str, rng: random.Random) -> Optional[str]:
     """GET avec Connection: close, lit max 64KB pour extraction liens."""
+    writer = None
     try:
         ssl_ctx = get_rotated_ssl_context(rng, include_h2=True)
         reader, writer = await asyncio.wait_for(
@@ -77,8 +84,6 @@ async def _fetch_page_lightweight(ip: str, host: str, rng: random.Random) -> Opt
         writer.write(req.encode())
         await writer.drain()
         data = await asyncio.wait_for(reader.read(PREFETCH_MAX_BODY), timeout=15)
-        writer.close()
-        await writer.wait_closed()
         # Skip HTTP headers, find body
         text = data.decode("utf-8", errors="replace")
         sep = text.find("\r\n\r\n")
@@ -87,6 +92,13 @@ async def _fetch_page_lightweight(ip: str, host: str, rng: random.Random) -> Opt
         return text
     except Exception:
         return None
+    finally:
+        if writer is not None:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
 
 def _extract_domains(links: List[str]) -> Set[str]:
