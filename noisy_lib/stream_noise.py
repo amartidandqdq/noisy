@@ -29,7 +29,7 @@ async def _stream_session(
     """Maintient une connexion longue et telecharge en chunks. Retourne bytes total."""
     total_bytes = 0
     try:
-        ssl_ctx = get_rotated_ssl_context(rng)
+        ssl_ctx = get_rotated_ssl_context(rng, include_h2=True)
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(ip, 443, ssl=ssl_ctx, server_hostname=host),
             timeout=15,

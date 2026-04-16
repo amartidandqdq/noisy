@@ -21,6 +21,13 @@ python noisy.py --tld fr,de,es           # TLD spécifiques
 python noisy.py --mobile-ratio 0.4       # 40% users mobiles
 python noisy.py --search-workers 2       # bruit recherche Google/Bing
 python noisy.py --history-file urls.json # replay historique navigateur
+python noisy.py --prefetch-workers 2    # DNS prefetch depuis liens des pages
+python noisy.py --dns-optimized         # mode léger: Connection:close, 64KB max
+python noisy.py --thirdparty-burst      # burst DNS tiers (CDN/trackers/ads)
+python noisy.py --background-noise      # bruit apps background (NTP/Spotify/Steam)
+python noisy.py --nxdomain-probes       # probes NXDOMAIN Chrome + captive portal
+python noisy.py --ech                   # ECH via curl_cffi (masque SNI du FAI)
+python noisy.py --stream-noise          # simulation streaming vidéo (chunks CDN)
 ```
 
 ### Lancement rapide (non-dev)
@@ -63,8 +70,13 @@ noisy_lib/
   fetch_client.py         → HTTP GET avec retry + throttle (80 lignes)
   crawler_session.py      → CrawlerBase: session, cookies, domaines (123 lignes)
   crawler.py              → UserCrawler: fetch + crawl_worker (150 lignes)
-  workers.py              → DNS / stats / UA refresh / HEAD / search noise (182 lignes)
-  tls_profiles.py         → Rotation cipher TLS pour diversité JA3 (75 lignes)
+  workers.py              → DNS / stats / UA refresh / HEAD / search noise (220 lignes)
+  tls_profiles.py         → Rotation cipher TLS + ALPN pour diversité JA3 (82 lignes)
+  dns_resolver.py         → DNS TTL cache avec IP persistence via dnspython (111 lignes)
+  dns_prefetch.py         → DNS prefetch browser-like depuis liens des pages (170 lignes)
+  dns_stealth.py          → 3rd-party burst, background noise, micro-burst, NXDOMAIN (163 lignes)
+  ech_client.py           → Encrypted Client Hello probe via curl_cffi (66 lignes)
+  stream_noise.py         → Simulation streaming CDN avec chunks (101 lignes)
   depth_model.py          → Modèle probabiliste profondeur crawl (28 lignes)
   referer_chain.py        → Simulation chaînes Referer réalistes (77 lignes)
   asset_fetcher.py        → Téléchargement partiel ressources statiques (86 lignes)
@@ -99,7 +111,12 @@ config.py (feuille — 0 import noisy_lib)
   ← fetchers.py ← config, profiles
   ← crawler_session.py ← config, cookie_store, metrics, profiles, throttle, rate_limiter, structures
   ← crawler.py ← crawler_session, depth_model, referer_chain, asset_fetcher, extractor, fetch_client, profiles
-  ← workers.py ← __init__, config, fetchers, tls_profiles
+  ← dns_resolver.py ← config (dnspython)
+  ← dns_prefetch.py ← config, dns_resolver, tls_profiles, profiles
+  ← dns_stealth.py ← config, dns_resolver, tls_profiles, profiles
+  ← ech_client.py ← config, tls_profiles (curl_cffi optional)
+  ← stream_noise.py ← config, dns_resolver, tls_profiles, throttle
+  ← workers.py ← __init__, config, fetchers, tls_profiles, dns_resolver
   ← ws_noise.py ← config, profiles
   ← traffic_mirror.py ← __init__, config, profiles, tls_profiles
   ← dashboard_collector.py ← config, profiles, workers
@@ -139,6 +156,12 @@ config.py (feuille — 0 import noisy_lib)
 | WebSocket/SSE bruit | `ws_noise.py` |
 | Miroir trafic DNS | `traffic_mirror.py` |
 | Session HTTP crawler (base) | `crawler_session.py` (CrawlerBase) |
+| DNS TTL cache / IP persistence | `dns_resolver.py` (DnsCache) |
+| DNS prefetch depuis page links | `dns_prefetch.py` |
+| 3rd-party burst / background / micro-burst / NXDOMAIN | `dns_stealth.py` |
+| ECH (Encrypted Client Hello) | `ech_client.py` |
+| Streaming CDN simulation | `stream_noise.py` |
+| Constantes DNS stealth / anti-DPI | `config.py` (THIRD_PARTY_DOMAINS, STREAMING_CDN_DOMAINS…) |
 
 ## Dashboard — fonctionnalités
 
@@ -174,6 +197,7 @@ config.py (feuille — 0 import noisy_lib)
 | `SharedMetrics` | `metrics.py` | Métriques partagées : request_log, domain_stats, tld_counts, category_counts, timing_heatmap, fingerprint_score(), pause/resume |
 | `RequestLogEntry` | `metrics.py` | namedtuple pour le log de requêtes |
 | `FetchResult` | `fetch_client.py` | Résultat HTTP avec status, html, bytes_received, error_msg, is_client_error, is_server_error |
+| `DnsCache` | `dns_resolver.py` | Cache DNS TTL-aware avec IP persistence (dnspython) |
 | `MetricsCollector` | `dashboard_collector.py` | Agrège stats crawlers → JSON, feature control, settings persistence, TLD filter, user add/remove |
 | `UserCrawler` | `crawler.py` | Crawl par utilisateur virtuel avec queue, semaphore, rate limiting |
 | `UserProfile` | `profiles.py` | Profil utilisateur : UA, geo, mobile, schedule, stealth headers, fingerprint rotation |
@@ -245,6 +269,19 @@ async def ma_fonction(x):
 | TLD/Region filter | 6 régions prédéfinies + TLD custom, appliqué live |
 | Settings persistence | .noisy_settings.json restauré au redémarrage |
 | Connection health | Vérification internet au démarrage |
+| DNS TTL cache | dnspython résolution avec respect TTL, pas de re-query avant expiry, `dns_resolver.py` |
+| DNS→TCP→TLS correlation | Chaque DNS resolve suivi de TCP+TLS handshake réel avec payload, `workers.py` |
+| IP persistence | 1 IP par domaine pendant durée TTL (pas de round-robin churn), `dns_resolver.py` |
+| DNS prefetch | Extraction domaines depuis liens page, burst DNS+TCP+TLS (comme Chrome), `dns_prefetch.py` |
+| Mode léger (dns-optimized) | Connection:close, 64KB max body, 1 retry, skip assets, `fetch_client.py`+`crawler.py` |
+| 3rd-party burst | 8-25 CDN/tracker/ad domains résolus en parallèle par page (effet iceberg), `dns_stealth.py` |
+| Background app noise | NTP/Spotify/WhatsApp/Discord/Steam DNS bruit continu, `dns_stealth.py` |
+| Micro-bursting | 30-60 queries simultanées puis silence 10-120s (pattern humain), `dns_stealth.py` |
+| NXDOMAIN probes | Chrome intranet redirect detector + captive portal checks, `dns_stealth.py` |
+| Range payload anti-DPI | GET+Range 4-12KB réel au lieu de HEAD 0-byte (défait heuristiques DPI), `dns_prefetch.py` |
+| ALPN negotiation | h2+http/1.1 dans TLS raw sockets, http/1.1 only pour aiohttp, `tls_profiles.py` |
+| ECH | Encrypted Client Hello via curl_cffi/BoringSSL (masque SNI du FAI), `ech_client.py` |
+| Streaming noise | Connexions longues CDN vidéo, chunks 128-512KB avec délais (simule vidéo), `stream_noise.py` |
 
 ## Statut projet
 - **Refactoring P0→P4** : terminé
@@ -253,6 +290,11 @@ async def ma_fonction(x):
 - **9 nouvelles features stealth** : terminé (TLS JA3, depth model, referer chains, asset fetch, cookies, throttle, WS noise, traffic mirror, crawler split)
 - **Dashboard temps réel** : terminé (30+ fonctionnalités)
 - **Audit sécurité** : terminé (bind local, HEAD-only noise, input validation, URL scheme validation)
+- **3 bugfixes post-features** : `randint(2,1)` asset_fetcher, queue 4-tuple dashboard, features propagation collector
+- **DNS stealth layer (5 features)** : terminé (TTL cache, DNS→TCP→TLS correlation, prefetch, lightweight mode, IP persistence)
+- **DNS advanced stealth (4 features)** : terminé (3rd-party burst, background noise, micro-burst, NXDOMAIN probes)
+- **Anti-DPI hardening (4+1 features)** : terminé (Range payload, ECH, streaming noise, IP persistence, ALPN)
+- **ALPN h2 bugfix critique** : `_build_default_context()` doit être http/1.1 only (aiohttp incompatible h2 framing)
 - **Tests** : 67 tests, tous verts, < 1s
 - **Fork** : github.com/amartidandqdq/noisy (forked from madereddy/noisy)
 - **⚠ dashboard_collector.py** : 501 lignes (god-object assumé, seule exception au max 180)
@@ -275,3 +317,8 @@ async def ma_fonction(x):
 | TLD generic passthrough | .com/.net/.org toujours inclus | Filtre TLD ne bloque pas les sites internationaux sur gTLD |
 | Settings persistence | JSON file, pas DB | Simple, portable, pas de dépendance |
 | Feature tags cliquables | Toggle on/off direct dans dashboard | UX rapide sans formulaire |
+| ALPN par contexte | http/1.1 only (aiohttp default), h2+http/1.1 (raw sockets rotated) | aiohttp ne supporte pas HTTP/2 framing → 400 sur tous les fetches si h2 négocié |
+| dnspython pour DNS | dnspython au lieu de stdlib getaddrinfo | getaddrinfo n'expose pas le TTL, indispensable pour cache TTL-aware |
+| curl_cffi pour ECH | curl_cffi (BoringSSL) au lieu de ssl stdlib | Python ssl n'a aucun support ECH, curl_cffi négocie ECH nativement |
+| IP persistence | Stocker toutes les IPs mais retourner toujours la 1ère | Browsers font pareil — évite le round-robin churn détectable par DPI |
+| Range payload | GET+Range 4-12KB au lieu de HEAD 0-byte | HEAD sans payload = pattern scan détectable par DPI |

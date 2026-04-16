@@ -150,10 +150,6 @@ body::after {
 .graph-canvas {
   width: 100%; height: 80px; display: flex; align-items: flex-end; gap: 1px;
 }
-.graph-bar {
-  flex: 1; background: linear-gradient(to top, var(--accent), var(--accent-dim));
-  min-height: 1px; transition: height .4s;
-}
 .graph-labels {
   display: flex; justify-content: space-between; margin-top: 4px;
   font-size: 9px; color: var(--text-dim);
@@ -209,12 +205,7 @@ tr:hover td { background: var(--surface2); }
 .tld-bar { flex: 1; height: 4px; background: var(--border); border-radius: 1px; overflow: hidden; }
 .tld-fill { height: 100%; background: var(--info); }
 .tld-count { min-width: 40px; text-align: right; color: var(--text-dim); }
-/* HEATMAP */
-.heatmap { display: grid; grid-template-columns: 30px repeat(24, 1fr); gap: 1px; font-size: 9px; }
-.hm-label { color: var(--text-dim); display: flex; align-items: center; }
-.hm-cell { aspect-ratio: 1; border-radius: 1px; min-height: 8px; }
-.hm-hours { display: contents; }
-.hm-hours span { color: var(--text-dim); text-align: center; font-size: 8px; }
+
 /* FEATURES */
 .feat-grid { display: flex; flex-wrap: wrap; gap: 6px; }
 .feat-tag {
@@ -363,14 +354,6 @@ select.cfg-input { appearance: none; cursor: pointer; }
 <div class="sections">
 
   <div class="section">
-    <div class="sec-head"><span class="sec-title">RPS History</span><span class="sec-line"></span></div>
-    <div class="sec-box">
-      <div class="graph-canvas" id="rpsGraph"></div>
-      <div class="graph-labels"><span>-2min</span><span>req/s</span><span>now</span></div>
-    </div>
-  </div>
-
-  <div class="section">
     <div class="sec-head"><span class="sec-title">Diurnal Activity</span><span class="sec-line"></span></div>
     <div class="sec-box">
       <svg class="diurnal-svg" id="diurnalSvg" viewBox="0 0 240 80" preserveAspectRatio="none"></svg>
@@ -399,11 +382,6 @@ select.cfg-input { appearance: none; cursor: pointer; }
   <div class="section">
     <div class="sec-head"><span class="sec-title">TLD Distribution</span><span class="sec-line"></span><button class="btn" onclick="clearStats()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button></div>
     <div class="sec-box" id="tldDist"><div class="no-data">waiting...</div></div>
-  </div>
-
-  <div class="section">
-    <div class="sec-head"><span class="sec-title">Timing Heatmap</span><span class="sec-line"></span></div>
-    <div class="sec-box" id="heatmapBox"><div class="no-data">waiting...</div></div>
   </div>
 
   <div class="section">
@@ -519,14 +497,6 @@ function spark(el, data) {
     b.style.height=Math.max(1,(v/p)*20)+'px';el.appendChild(b);
   });
 }
-function rpsGraph(data) {
-  const c=document.getElementById('rpsGraph');c.innerHTML='';
-  const p=Math.max(...data,0.1);
-  data.forEach(v=>{
-    const b=document.createElement('div');b.className='graph-bar';
-    b.style.height=Math.max(1,(v/p)*80)+'px';c.appendChild(b);
-  });
-}
 function diurnalChart(curve, hour) {
   const svg=document.getElementById('diurnalSvg');
   const w=240, h=80;
@@ -597,7 +567,6 @@ function update(d) {
   visH.push(a.visited); if(visH.length>H)visH.shift();
   spark(document.getElementById('rpsSpark'),rpsH);
   spark(document.getElementById('visitedSpark'),visH);
-  rpsGraph(rpsH);
   // Diurnal
   if(d.diurnal_curve) diurnalChart(d.diurnal_curve, d.current_hour);
   // Users table
@@ -635,29 +604,6 @@ function update(d) {
       <div class="tld-bar"><div class="tld-fill" style="width:${(t.count/maxC)*100}%"></div></div>
       <span class="tld-count">${fmt(t.count)}</span>
     </div>`).join('');
-  }
-  // Heatmap
-  if(d.timing_heatmap){
-    const hb=document.getElementById('heatmapBox');
-    const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-    const hm=d.timing_heatmap;
-    const vals=Object.values(hm);
-    const maxH=Math.max(...vals,1);
-    let html='<div class="heatmap"><div></div>';
-    html+='<div class="hm-hours">';
-    for(let h=0;h<24;h++) html+=`<span>${h}</span>`;
-    html+='</div>';
-    for(let day=0;day<7;day++){
-      html+=`<div class="hm-label">${days[day]}</div>`;
-      for(let h=0;h<24;h++){
-        const v=hm[day+'_'+h]||0;
-        const intensity=v/maxH;
-        const bg=v?`rgba(0,255,136,${0.1+intensity*0.9})`:'rgba(255,255,255,0.03)';
-        html+=`<div class="hm-cell" style="background:${bg}" title="${days[day]} ${h}h: ${v} req"></div>`;
-      }
-    }
-    html+='</div>';
-    hb.innerHTML=html;
   }
   // Categories
   const cd=document.getElementById('catDist');

@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 async def _tcp_tls_probe(ip: str, host: str, rng: random.Random, timeout: float = 10) -> bool:
     """TCP+TLS+GET avec Range payload (4-12KB) — anti-DPI. Retourne True si OK."""
     try:
-        ssl_ctx = get_rotated_ssl_context(rng)
+        ssl_ctx = get_rotated_ssl_context(rng, include_h2=True)
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(ip, 443, ssl=ssl_ctx, server_hostname=host),
             timeout=timeout,
@@ -60,7 +60,7 @@ _tcp_tls_head = _tcp_tls_probe
 async def _fetch_page_lightweight(ip: str, host: str, rng: random.Random) -> Optional[str]:
     """GET avec Connection: close, lit max 64KB pour extraction liens."""
     try:
-        ssl_ctx = get_rotated_ssl_context(rng)
+        ssl_ctx = get_rotated_ssl_context(rng, include_h2=True)
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(ip, 443, ssl=ssl_ctx, server_hostname=host),
             timeout=10,

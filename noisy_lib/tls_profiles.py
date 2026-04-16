@@ -56,8 +56,12 @@ def _build_default_context() -> ssl.SSLContext:
 DEFAULT_SSL_CONTEXT = _build_default_context()
 
 
-def get_rotated_ssl_context(rng: Optional[random.Random] = None) -> ssl.SSLContext:
-    """Crée un SSLContext avec cipher suite aléatoire pour diversité JA3."""
+def get_rotated_ssl_context(rng: Optional[random.Random] = None, include_h2: bool = False) -> ssl.SSLContext:
+    """Crée un SSLContext avec cipher suite aléatoire pour diversité JA3.
+
+    include_h2=False (default): http/1.1 only — safe for aiohttp.
+    include_h2=True: h2 + http/1.1 — for raw sockets only (JA3 fingerprint).
+    """
     r = rng or random.Random()
     ctx = ssl.create_default_context()
     ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)
@@ -69,9 +73,12 @@ def get_rotated_ssl_context(rng: Optional[random.Random] = None) -> ssl.SSLConte
         log.debug(f"[TLS] cipher set failed, using default")
         return DEFAULT_SSL_CONTEXT
 
-    # ALPN — obligatoire pour ressembler a un vrai navigateur (h2 + http/1.1)
+    # ALPN — h2 ONLY for raw sockets; aiohttp cannot handle HTTP/2 framing
     try:
-        ctx.set_alpn_protocols(["h2", "http/1.1"])
+        if include_h2:
+            ctx.set_alpn_protocols(["h2", "http/1.1"])
+        else:
+            ctx.set_alpn_protocols(["http/1.1"])
     except Exception:
         pass
 

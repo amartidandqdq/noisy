@@ -360,6 +360,33 @@ class MetricsCollector:
         log.info(f"[DASHBOARD] user {uid} supprime (total: {len(self.crawlers)})")
         return {"status": "ok", "removed_user_id": uid, "total_users": len(self.crawlers)}
 
+    def _get_all_features_state(self) -> dict:
+        """Retourne l'etat complet de toutes les features pour persistence."""
+        state = {}
+        if self.crawlers:
+            c0 = self.crawlers[0]
+            # Schedule
+            state["schedule"] = f"{c0.profile.schedule[0]}-{c0.profile.schedule[1]}" if c0.profile.schedule else None
+            # Geo
+            state["geo"] = c0.profile.geo
+            # Mobile ratio
+            n_mobile = sum(1 for c in self.crawlers if c.profile.is_mobile)
+            state["mobile_ratio"] = n_mobile / len(self.crawlers) if self.crawlers else 0
+            # Search workers
+            state["search_workers"] = self._search_workers
+            # Auto-pause
+            state["auto_pause"] = self.auto_pause_enabled
+            # Diurnal
+            state["diurnal"] = c0.profile.diurnal_enabled
+            # Boolean stealth features from crawler.features dict
+            for key in ("tls_rotation", "realistic_depth", "referer_chains",
+                        "asset_fetching", "bandwidth_throttle",
+                        "dns_optimized", "dns_prefetch",
+                        "thirdparty_burst", "background_noise", "nxdomain_probes",
+                        "ech", "stream_noise"):
+                state[key] = c0.features.get(key, False)
+        return state
+
     def apply_features(self, data: dict) -> dict:
         """Applique les features stealth live."""
         changes = []
@@ -456,7 +483,9 @@ class MetricsCollector:
                 changes.append(f"{key}={'on' if val else 'off'}")
 
         log.info(f"[FEATURES] {', '.join(changes)}")
-        _save_settings({"features": data})
+        # Save FULL features state (not just the partial data from this click)
+        full_features = self._get_all_features_state()
+        _save_settings({"features": full_features})
         return {"status": "ok", "changes": changes}
 
     def apply_tld_filter(self, regions: List[str], custom_tlds: List[str]) -> dict:

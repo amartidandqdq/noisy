@@ -49,7 +49,6 @@ python noisy.py --dashboard
 | **Diurnal curve** | 24h activity model with current position marker |
 | **Stealth score** | Traffic fingerprint analysis (domain diversity, timing variance) |
 | **Domain categories** | 11 categories (news, social, tech, ecommerce, etc.) with colored bars |
-| **Timing heatmap** | 7×24 grid (day × hour) showing request intensity |
 | **Controls** | Pause/resume, dark/light theme, add/remove users dynamically |
 | **Config editor** | Change sleep, depth, domain delay live without restart |
 | **Feature toggles** | Schedule, geo, mobile, search, auto-pause, diurnal — click on/off |
@@ -129,7 +128,7 @@ noisy_lib/
   crawler_session.py         CrawlerBase: session, cookies, domain helpers (123 lines)
   crawler.py                 UserCrawler: fetch + crawl_worker (150 lines)
   workers.py                 DNS / stats / UA refresh / HEAD / search noise (220 lines)
-  tls_profiles.py            TLS cipher + ALPN rotation for JA3 diversity (82 lines)
+  tls_profiles.py            TLS cipher + ALPN rotation for JA3 diversity (92 lines)
   depth_model.py             Probabilistic crawl depth model (28 lines)
   referer_chain.py           Realistic HTTP referer chain simulation (77 lines)
   asset_fetcher.py           Static asset partial downloads (86 lines)
@@ -142,7 +141,7 @@ noisy_lib/
   dns_stealth.py             3rd-party burst, background noise, micro-burst, NXDOMAIN (163 lines)
   ech_client.py              Encrypted Client Hello probe via curl_cffi (66 lines)
   stream_noise.py            Streaming CDN simulation with chunked downloads (101 lines)
-  dashboard_collector.py     MetricsCollector + settings persistence (520 lines)
+  dashboard_collector.py     MetricsCollector + settings persistence (556 lines)
   dashboard.py               FastAPI routes + WebSocket + webhook (198 lines)
   static/dashboard.html      Single-file dashboard UI
 ```

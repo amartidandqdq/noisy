@@ -66,7 +66,7 @@ async def dns_noise_worker(
             continue
         # TCP + TLS handshake + HEAD (correlation DNS→TCP→SNI)
         try:
-            ssl_ctx = get_rotated_ssl_context(rng)
+            ssl_ctx = get_rotated_ssl_context(rng, include_h2=True)
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(ip, 443, ssl=ssl_ctx, server_hostname=host),
                 timeout=10,
