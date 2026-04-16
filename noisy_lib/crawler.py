@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
-from .config import DNS_CACHE_TTL, MAX_HEADER_SIZE
+from .config import DNS_CACHE_TTL, MAX_HEADER_SIZE, categorize_domain
 from .extractor import extract_links
 from .fetch_client import fetch_with_retry
 from .profiles import UserProfile, _activity_pause_seconds
@@ -33,6 +33,8 @@ class SharedMetrics:
         self.domain_stats: Dict[str, Dict[str, int]] = {}  # domain -> {ok, fail, bytes}
         self.tld_counts: Dict[str, int] = {}
         self.total_bytes: int = 0
+        self.category_counts: Dict[str, int] = {}
+        self.timing_heatmap: Dict[str, int] = {}  # "day_hour" -> count (0=Mon, 6=Sun)
         self.recent_errors: collections.deque = collections.deque(maxlen=50)
         self.pause_event: asyncio.Event = asyncio.Event()
         self.pause_event.set()  # not paused by default
@@ -55,6 +57,13 @@ class SharedMetrics:
         # TLD
         tld = domain.rsplit(".", 1)[-1] if domain and "." in domain else "local"
         self.tld_counts[tld] = self.tld_counts.get(tld, 0) + 1
+        # Category
+        cat = categorize_domain(domain)
+        self.category_counts[cat] = self.category_counts.get(cat, 0) + 1
+        # Timing heatmap
+        lt = time.localtime()
+        hm_key = f"{lt.tm_wday}_{lt.tm_hour}"
+        self.timing_heatmap[hm_key] = self.timing_heatmap.get(hm_key, 0) + 1
         # Bandwidth
         self.total_bytes += nbytes
         # Errors
@@ -95,6 +104,11 @@ class SharedMetrics:
         """TLD distribution sorted by count."""
         items = sorted(self.tld_counts.items(), key=lambda x: x[1], reverse=True)
         return [{"tld": f".{tld}", "count": c} for tld, c in items[:15]]
+
+    def category_distribution(self) -> List[dict]:
+        """Category distribution sorted by count."""
+        items = sorted(self.category_counts.items(), key=lambda x: x[1], reverse=True)
+        return [{"category": cat, "count": c} for cat, c in items]
 
     def fingerprint_score(self) -> dict:
         """Analyse traffic pattern for naturalness. Higher = more natural."""
@@ -151,6 +165,7 @@ class UserCrawler:
         stop_event: asyncio.Event, total_connections: int,
         connections_per_host: int, keepalive_timeout: int,
         shared_metrics: Optional["SharedMetrics"] = None,
+        domain_blocklist: Optional[set] = None,
     ):
         self.profile = profile
         self.rng = profile.rng
@@ -164,6 +179,7 @@ class UserCrawler:
         self.max_sleep = max_sleep
         self.max_links_per_page = max_links_per_page
         self.url_blacklist = url_blacklist
+        self.domain_blocklist = domain_blocklist or set()
         self.failed_counts: BoundedDict = BoundedDict(maxsize=10_000)
         self.max_failures = 3
         self.stats: Dict[str, int] = {
@@ -187,8 +203,9 @@ class UserCrawler:
 
     async def _session_get(self) -> aiohttp.ClientSession:
         if self._session is None:
+            self._cookie_jar = aiohttp.CookieJar(unsafe=True)
             self._session = aiohttp.ClientSession(
-                connector=self._connector,
+                connector=self._connector, cookie_jar=self._cookie_jar,
                 max_line_size=MAX_HEADER_SIZE, max_field_size=MAX_HEADER_SIZE,
             )
         return self._session
@@ -199,10 +216,17 @@ class UserCrawler:
             self._session = None
         await self._connector.close()
 
+    def _domain_blocked(self, host: str) -> bool:
+        """Vérifie si le hostname ou un domaine parent est dans la blocklist (O(1))."""
+        parts = host.split(".")
+        return any(".".join(parts[i:]) in self.domain_blocklist for i in range(len(parts)))
+
     async def fetch(self, url: str, depth: int, referrer: Optional[str]) -> Optional[List]:
         async with self.semaphore:
             domain = urlsplit(url).hostname
             if not domain or any(b in url for b in self.url_blacklist):
+                return None
+            if self.domain_blocklist and self._domain_blocked(domain):
                 return None
             if url in self.shared_visited:
                 return None
@@ -239,7 +263,7 @@ class UserCrawler:
                         self.profile.user_id, url, domain,
                         result.status, result.bytes_received, "",
                     )
-                links = extract_links(html, url, blacklist=self.url_blacklist)
+                links = extract_links(html, url, blacklist=self.url_blacklist, domain_blocklist=self.domain_blocklist)
                 del html
                 if links:
                     links = self.rng.sample(links, min(len(links), self.max_links_per_page))
@@ -296,8 +320,14 @@ class UserCrawler:
 
     async def crawl_worker(self):
         while not self.stop_event.is_set():
+            # Schedule check: sleep until active hour
+            if not self.profile.is_active_hour():
+                await asyncio.sleep(60)
+                continue
             try:
-                url, depth, referrer = await self.queue.get()
+                url, depth, referrer = await asyncio.wait_for(self.queue.get(), timeout=2.0)
+            except asyncio.TimeoutError:
+                continue
             except asyncio.CancelledError:
                 break
             skip = depth > self.max_depth

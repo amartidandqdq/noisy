@@ -12,8 +12,10 @@ from .config import (
     DEFAULT_DASHBOARD_PORT, DEFAULT_DNS_WORKERS, DEFAULT_DOMAIN_DELAY,
     DEFAULT_KEEPALIVE_TIMEOUT, DEFAULT_MAX_DEPTH, DEFAULT_MAX_LINKS_PER_PAGE,
     DEFAULT_MAX_QUEUE_SIZE, DEFAULT_MAX_SLEEP, DEFAULT_MIN_SLEEP,
-    DEFAULT_NUM_USERS, DEFAULT_POST_NOISE_WORKERS, DEFAULT_RUN_TIMEOUT_SECONDS,
+    DEFAULT_MOBILE_RATIO, DEFAULT_NUM_USERS, DEFAULT_POST_NOISE_WORKERS,
+    DEFAULT_RUN_TIMEOUT_SECONDS, DEFAULT_SEARCH_WORKERS,
     DEFAULT_THREADS, DEFAULT_TOTAL_CONNECTIONS, DEFAULT_UA_REFRESH_DAYS,
+    REGION_PRESETS,
 )
 
 log = logging.getLogger(__name__)
@@ -64,6 +66,21 @@ def validate_args(args) -> List[str]:
     per_user_queue = args.max_queue_size // args.num_users if args.num_users > 0 else 0
     if per_user_queue < 10:
         errors.append(f"Queue par user trop petite ({per_user_queue}). Augmenter --max_queue_size.")
+    for r in (getattr(args, "regions", None) or []):
+        if r not in REGION_PRESETS:
+            errors.append(f"--region inconnu '{r}'. Valides: {', '.join(sorted(REGION_PRESETS))}")
+    schedule = getattr(args, "schedule", None)
+    if schedule:
+        try:
+            parts = schedule.split("-")
+            s, e = int(parts[0]), int(parts[1])
+            if not (0 <= s <= 23 and 0 <= e <= 23):
+                errors.append(f"--schedule heures doivent être 0-23, reçu {schedule}")
+        except (ValueError, IndexError):
+            errors.append(f"--schedule format invalide '{schedule}'. Attendu: 8-23")
+    mr = getattr(args, "mobile_ratio", 0)
+    if not (0 <= mr <= 1):
+        errors.append(f"--mobile-ratio doit être entre 0 et 1, reçu {mr}")
     return errors
 
 
@@ -104,4 +121,18 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Workers POST bruit (défaut: %(default)s)")
     p.add_argument("--webhook-url", default=None,
                    help="URL webhook pour alertes (optionnel)")
+    p.add_argument("--tld", default=None,
+                   help="Filtrer par TLD pays (ex: fr,de,uk). Les TLD génériques passent toujours.")
+    p.add_argument("--region", dest="regions", action="append", default=None,
+                   help=f"Preset régional ({', '.join(sorted(REGION_PRESETS))}). Répétable.")
+    p.add_argument("--schedule", default=None,
+                   help="Heures actives (ex: 8-23). Hors plage = pause.")
+    p.add_argument("--geo", default=None,
+                   help="Profil géo (ex: europe_fr, asia_jp, americas_us). Auto-assign Accept-Language.")
+    p.add_argument("--mobile-ratio", type=float, default=DEFAULT_MOBILE_RATIO,
+                   help="Ratio d'utilisateurs mobiles 0-1 (défaut: %(default)s)")
+    p.add_argument("--search-workers", type=int, default=DEFAULT_SEARCH_WORKERS,
+                   help="Workers de bruit recherche web (défaut: %(default)s)")
+    p.add_argument("--history-file", default=None,
+                   help="Fichier historique navigateur (JSON/TXT) à mixer dans le bruit")
     return p

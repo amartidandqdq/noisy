@@ -209,6 +209,34 @@ tr:hover td { background: var(--surface2); }
 .tld-bar { flex: 1; height: 4px; background: var(--border); border-radius: 1px; overflow: hidden; }
 .tld-fill { height: 100%; background: var(--info); }
 .tld-count { min-width: 40px; text-align: right; color: var(--text-dim); }
+/* HEATMAP */
+.heatmap { display: grid; grid-template-columns: 30px repeat(24, 1fr); gap: 1px; font-size: 9px; }
+.hm-label { color: var(--text-dim); display: flex; align-items: center; }
+.hm-cell { aspect-ratio: 1; border-radius: 1px; min-height: 8px; }
+.hm-hours { display: contents; }
+.hm-hours span { color: var(--text-dim); text-align: center; font-size: 8px; }
+/* FEATURES */
+.feat-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.feat-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; font-size: 10px; border-radius: 2px;
+  text-transform: uppercase; letter-spacing: 1px;
+}
+.feat-tag.on { background: rgba(0,255,136,0.1); border: 1px solid var(--accent); color: var(--accent); cursor: pointer; }
+.feat-tag.off { background: rgba(255,255,255,0.03); border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
+.feat-tag:hover { opacity: 0.8; }
+/* TLD FILTER */
+.tld-filter-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+.region-cb { display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; }
+.region-cb input { accent-color: var(--accent); cursor: pointer; }
+.tld-custom { display: flex; gap: 6px; margin-bottom: 8px; }
+.tld-custom input {
+  flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 4px 8px; font-family: inherit; font-size: 11px;
+}
+.tld-custom input:focus { outline: none; border-color: var(--accent); }
+.tld-active { font-size: 10px; color: var(--text-dim); margin-top: 4px; }
+.tld-active span { color: var(--info); }
 /* CONFIG PANEL */
 .config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .cfg-field { display: flex; flex-direction: column; gap: 2px; }
@@ -218,6 +246,7 @@ tr:hover td { background: var(--surface2); }
   padding: 4px 8px; font-family: inherit; font-size: 12px; width: 100%;
 }
 .cfg-input:focus { outline: none; border-color: var(--accent); }
+select.cfg-input { appearance: none; cursor: pointer; }
 .cfg-btn {
   grid-column: 1 / -1; padding: 6px; background: var(--accent-dim); border: 1px solid var(--accent);
   color: var(--accent); font-family: inherit; font-size: 10px; text-transform: uppercase;
@@ -253,8 +282,13 @@ tr:hover td { background: var(--surface2); }
     <span class="uptime" id="uptime">00:00:00</span>
     <div class="btn-group">
       <button class="btn" id="btnPause" onclick="togglePause()">pause</button>
+      <button class="btn" onclick="addUser()" title="Add virtual user">+ user</button>
+      <button class="btn" onclick="removeUser()" title="Remove last virtual user">- user</button>
       <button class="btn" id="btnTheme" onclick="toggleTheme()">light</button>
       <button class="btn" onclick="exportMetrics()">export</button>
+      <button class="btn" onclick="exportSettings()">save cfg</button>
+      <button class="btn" onclick="document.getElementById('importFile').click()">load cfg</button>
+      <input type="file" id="importFile" accept=".json" style="display:none" onchange="importSettings(this)">
     </div>
   </div>
 </div>
@@ -309,6 +343,21 @@ tr:hover td { background: var(--surface2); }
       <span class="card-sub" id="fpLabel">-</span>
     </div>
   </div>
+  <div class="card">
+    <div class="card-label">Users</div>
+    <div class="card-value info" id="userCount">-</div>
+    <div class="card-sub" id="userBreakdown">-</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Blocklist</div>
+    <div class="card-value" id="nsfwCount">-</div>
+    <div class="card-sub">nsfw + phishing</div>
+  </div>
+  <div class="card">
+    <div class="card-label">DNS</div>
+    <div class="card-value info" id="dnsServer" style="font-size:14px">-</div>
+    <div class="card-sub" id="dnsExtra"></div>
+  </div>
 </div>
 
 <div class="sections">
@@ -334,32 +383,54 @@ tr:hover td { background: var(--surface2); }
     <div class="sec-box" style="max-height:none">
       <table>
         <thead><tr>
-          <th>ID</th><th>Visited</th><th>Failed</th><th>4xx</th><th>5xx</th><th>Net</th>
-          <th>Queued</th><th>Data</th><th>Activity</th><th>User Agent</th>
+          <th>ID</th><th>Type</th><th>Geo</th><th>Status</th><th>Visited</th><th>Failed</th>
+          <th>4xx</th><th>5xx</th><th>Net</th><th>Queued</th><th>Data</th><th>Activity</th><th>User Agent</th>
         </tr></thead>
-        <tbody id="usersBody"><tr><td colspan="10" class="no-data">waiting...</td></tr></tbody>
+        <tbody id="usersBody"><tr><td colspan="13" class="no-data">waiting...</td></tr></tbody>
       </table>
     </div>
   </div>
 
   <div class="section">
-    <div class="sec-head"><span class="sec-title">Top Domains</span><span class="sec-line"></span></div>
+    <div class="sec-head"><span class="sec-title">Top Domains</span><span class="sec-line"></span><button class="btn" onclick="clearStats()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button></div>
     <div class="sec-box" id="topDomains"><div class="no-data">waiting...</div></div>
   </div>
 
   <div class="section">
-    <div class="sec-head"><span class="sec-title">TLD Distribution</span><span class="sec-line"></span></div>
+    <div class="sec-head"><span class="sec-title">TLD Distribution</span><span class="sec-line"></span><button class="btn" onclick="clearStats()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button></div>
     <div class="sec-box" id="tldDist"><div class="no-data">waiting...</div></div>
   </div>
 
   <div class="section">
-    <div class="sec-head"><span class="sec-title">Live Request Log</span><span class="sec-line"></span></div>
+    <div class="sec-head"><span class="sec-title">Timing Heatmap</span><span class="sec-line"></span></div>
+    <div class="sec-box" id="heatmapBox"><div class="no-data">waiting...</div></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">Categories</span><span class="sec-line"></span></div>
+    <div class="sec-box" id="catDist"><div class="no-data">waiting...</div></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">Live Request Log</span><span class="sec-line"></span><button class="btn" onclick="clearLog()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button></div>
     <div class="sec-box" id="liveLog" style="max-height:220px"><div class="no-data">waiting...</div></div>
   </div>
 
   <div class="section">
-    <div class="sec-head"><span class="sec-title">Recent Errors</span><span class="sec-line"></span></div>
+    <div class="sec-head"><span class="sec-title">Recent Errors</span><span class="sec-line"></span><button class="btn" onclick="clearErrors()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button></div>
     <div class="sec-box" id="errList" style="max-height:220px"><div class="no-data">no errors</div></div>
+  </div>
+
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">TLD / Region Filter</span><span class="sec-line"></span></div>
+    <div class="sec-box">
+      <div class="tld-filter-grid" id="regionCheckboxes"></div>
+      <div class="tld-custom">
+        <input type="text" id="customTlds" placeholder="TLD personnalisés (ex: fr,de,uk)">
+      </div>
+      <button class="cfg-btn" onclick="applyTldFilter()">Apply Filter</button>
+      <div class="tld-active" id="tldStatus"></div>
+    </div>
   </div>
 
   <div class="section">
@@ -384,6 +455,36 @@ tr:hover td { background: var(--surface2); }
     <div class="sec-box" id="fpDetail"><div class="no-data">waiting...</div></div>
   </div>
 
+  <div class="section">
+    <div class="sec-head"><span class="sec-title">Features Control</span><span class="sec-line"></span></div>
+    <div class="sec-box">
+      <div class="config-grid" id="featCtrl">
+        <div class="cfg-field">
+          <label class="cfg-label">Schedule (ex: 8-23)</label>
+          <input class="cfg-input" id="featSchedule" type="text" placeholder="off">
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label">Geo profile</label>
+          <select class="cfg-input" id="featGeo"><option value="">off</option></select>
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label">Mobile ratio (0-1)</label>
+          <input class="cfg-input" id="featMobile" type="number" step="0.1" min="0" max="1" value="0.3">
+        </div>
+        <div class="cfg-field">
+          <label class="cfg-label">Search workers</label>
+          <input class="cfg-input" id="featSearch" type="number" step="1" min="0" max="10" value="0">
+        </div>
+        <div class="cfg-field" style="display:flex;justify-content:center;align-items:flex-end">
+          <span class="card-sub" id="featStatus"></span>
+        </div>
+      </div>
+      <button class="cfg-btn" onclick="applyFeatures()">Apply Features</button>
+      <button class="cfg-btn" onclick="resetFeatures()" style="background:transparent;border-color:var(--text-dim);color:var(--text-dim);margin-top:4px">Reset All</button>
+      <div class="feat-grid" id="featTags" style="margin-top:8px"></div>
+    </div>
+  </div>
+
 </div>
 
 <div class="footer">
@@ -393,7 +494,7 @@ tr:hover td { background: var(--surface2); }
 
 <script>
 const H = 60, rpsH = [], visH = [];
-let ws, rDelay = 1000, paused = false, cfgLoaded = false;
+let ws, rDelay = 1000, paused = false, cfgLoaded = false, featLoaded = false;
 
 function fmt(n) {
   if (n >= 1e6) return (n/1e6).toFixed(1)+'M';
@@ -453,6 +554,28 @@ function update(d) {
   document.getElementById('uptime').textContent=fmtUp(d.uptime_seconds);
   document.getElementById('bw').textContent=a.bandwidth_kbps.toFixed(0)+' KB/s';
   document.getElementById('bwTotal').textContent=fmtB(a.total_bytes);
+  if(d.users){
+    const nMobile=d.users.filter(u=>u.is_mobile).length;
+    const nActive=d.users.filter(u=>u.active).length;
+    const nGeo=new Set(d.users.map(u=>u.geo).filter(Boolean)).size;
+    document.getElementById('userCount').textContent=d.users.length;
+    let parts=[];
+    if(nMobile) parts.push(nMobile+' mobile');
+    parts.push((d.users.length-nMobile)+' desktop');
+    if(nActive<d.users.length) parts.push(nActive+' active');
+    if(nGeo) parts.push(nGeo+' geo');
+    document.getElementById('userBreakdown').textContent=parts.join(' · ');
+  }
+  document.getElementById('nsfwCount').textContent=d.nsfw_blocklist_size?fmt(d.nsfw_blocklist_size):'-';
+  if(d.dns_servers&&d.dns_servers.length){
+    document.getElementById('dnsServer').textContent=d.dns_servers[0];
+    if(d.dns_servers.length>1){
+      document.getElementById('dnsExtra').innerHTML=
+        `<span style="cursor:pointer;text-decoration:underline" onclick="this.textContent='${d.dns_servers.join(' · ')}'">+ ${d.dns_servers.length-1} more</span>`;
+    } else {
+      document.getElementById('dnsExtra').textContent='system';
+    }
+  }
   // Alert
   const ab=document.getElementById('alertBanner');
   ab.classList.toggle('show', a.alert_active);
@@ -481,7 +604,11 @@ function update(d) {
   const tb=document.getElementById('usersBody');
   if(d.users&&d.users.length){
     tb.innerHTML=d.users.map(u=>`<tr>
-      <td class="uid">U${u.id}</td><td>${fmt(u.visited)}</td><td>${fmt(u.failed)}</td>
+      <td class="uid">U${u.id}</td>
+      <td style="color:${u.is_mobile?'var(--warn)':'var(--info)'}">${u.is_mobile?'mobile':'desktop'}</td>
+      <td style="color:var(--text-dim)">${u.geo||'-'}</td>
+      <td><span style="color:${u.active?'var(--accent)':'var(--fail)'}">${u.active?'active':'sleep'}</span></td>
+      <td>${fmt(u.visited)}</td><td>${fmt(u.failed)}</td>
       <td class="tc4">${fmt(u.client_errors)}</td><td class="tc5">${fmt(u.server_errors)}</td>
       <td class="tcn">${fmt(u.network_errors)}</td><td>${fmt(u.queued)}</td>
       <td>${fmtB(u.bytes)}</td>
@@ -507,6 +634,42 @@ function update(d) {
       <span class="tld-name">${t.tld}</span>
       <div class="tld-bar"><div class="tld-fill" style="width:${(t.count/maxC)*100}%"></div></div>
       <span class="tld-count">${fmt(t.count)}</span>
+    </div>`).join('');
+  }
+  // Heatmap
+  if(d.timing_heatmap){
+    const hb=document.getElementById('heatmapBox');
+    const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const hm=d.timing_heatmap;
+    const vals=Object.values(hm);
+    const maxH=Math.max(...vals,1);
+    let html='<div class="heatmap"><div></div>';
+    html+='<div class="hm-hours">';
+    for(let h=0;h<24;h++) html+=`<span>${h}</span>`;
+    html+='</div>';
+    for(let day=0;day<7;day++){
+      html+=`<div class="hm-label">${days[day]}</div>`;
+      for(let h=0;h<24;h++){
+        const v=hm[day+'_'+h]||0;
+        const intensity=v/maxH;
+        const bg=v?`rgba(0,255,136,${0.1+intensity*0.9})`:'rgba(255,255,255,0.03)';
+        html+=`<div class="hm-cell" style="background:${bg}" title="${days[day]} ${h}h: ${v} req"></div>`;
+      }
+    }
+    html+='</div>';
+    hb.innerHTML=html;
+  }
+  // Categories
+  const cd=document.getElementById('catDist');
+  if(d.category_distribution&&d.category_distribution.length){
+    const maxCat=d.category_distribution[0].count;
+    const catColors={news:'#4fc3f7',social:'#e040fb',ecommerce:'#ffb74d',tech:'#00e676',
+      education:'#7c4dff',finance:'#ffd740',entertainment:'#ff5252',travel:'#26c6da',
+      health:'#66bb6a',sports:'#ff7043',government:'#78909c',other:'#546e7a'};
+    cd.innerHTML=d.category_distribution.map(c=>`<div class="tld-row">
+      <span class="tld-name" style="color:${catColors[c.category]||'var(--info)'};min-width:80px">${c.category}</span>
+      <div class="tld-bar"><div class="tld-fill" style="width:${(c.count/maxCat)*100}%;background:${catColors[c.category]||'var(--info)'}"></div></div>
+      <span class="tld-count">${fmt(c.count)}</span>
     </div>`).join('');
   }
   // Live log
@@ -547,6 +710,34 @@ function update(d) {
   }).join('');
   // Config (load once)
   if(!cfgLoaded&&d.users){cfgLoaded=true;loadConfig();}
+  if(!tldFilterLoaded){tldFilterLoaded=true;loadTldFilter();}
+  if(!featLoaded){featLoaded=true;loadFeatures();}
+  // Features tags (clickable toggles)
+  if(d.features){
+    const f=d.features;
+    const tags=[];
+    tags.push(f.schedule
+      ?`<span class="feat-tag on" onclick="toggleFeat('schedule',null)" title="Click to disable">schedule ${f.schedule[0]}h–${f.schedule[1]}h</span>`
+      :`<span class="feat-tag off" onclick="toggleFeat('schedule','8-23')" title="Click to enable 8h-23h">schedule off</span>`);
+    tags.push(f.mobile_count
+      ?`<span class="feat-tag on" onclick="toggleFeat('mobile_ratio',0)" title="Click to disable">mobile ×${f.mobile_count}</span>`
+      :`<span class="feat-tag off" onclick="toggleFeat('mobile_ratio',0.3)" title="Click to enable 30%">mobile off</span>`);
+    tags.push(f.geo_profiles&&f.geo_profiles.length
+      ?`<span class="feat-tag on" onclick="toggleFeat('geo',null)" title="Click to disable">geo ${f.geo_profiles.join(', ')}</span>`
+      :`<span class="feat-tag off" onclick="toggleFeat('geo','europe_fr')" title="Click to enable europe_fr">geo off</span>`);
+    tags.push(f.search_workers
+      ?`<span class="feat-tag on" onclick="toggleFeat('search_workers',0)" title="Click to disable">search ×${f.search_workers}</span>`
+      :`<span class="feat-tag off" onclick="toggleFeat('search_workers',2)" title="Click to enable ×2">search off</span>`);
+    tags.push(f.auto_pause
+      ?`<span class="feat-tag on" onclick="toggleFeat('auto_pause',false)" title="Auto-pause si fail% > 50%">auto-pause on</span>`
+      :`<span class="feat-tag off" onclick="toggleFeat('auto_pause',true)" title="Click to enable">auto-pause off</span>`);
+    tags.push(f.diurnal
+      ?`<span class="feat-tag on" onclick="toggleFeat('diurnal',false)" title="Click to disable diurnal curve">diurnal on</span>`
+      :`<span class="feat-tag off" onclick="toggleFeat('diurnal',true)" title="Click to enable diurnal curve">diurnal off</span>`);
+    tags.push('<span class="feat-tag on" title="Always on">stealth headers</span>');
+    tags.push('<span class="feat-tag on" title="Always on">blocklist oisd</span>');
+    document.getElementById('featTags').innerHTML=tags.join('');
+  }
   // Timestamp
   document.getElementById('lastUpdate').textContent='last update: '+new Date(d.timestamp).toLocaleTimeString();
 }
@@ -598,6 +789,152 @@ async function applyConfig(){
     document.getElementById('cfgStatus').textContent='applied!';
     setTimeout(()=>document.getElementById('cfgStatus').textContent='',2000);
   }catch(e){document.getElementById('cfgStatus').textContent='error';}
+}
+// ---- Features ----
+const GEO_LIST=['','europe_fr','europe_de','europe_es','europe_it','europe_uk','europe_nl','europe_pl','europe_pt','europe_se',
+  'americas_us','americas_br','americas_mx','americas_ca','asia_jp','asia_kr','asia_cn','asia_in',
+  'middle_east_ae','middle_east_tr','africa_za','oceania_au'];
+async function loadFeatures(){
+  const sel=document.getElementById('featGeo');
+  sel.innerHTML=GEO_LIST.map(g=>`<option value="${g}">${g||'off'}</option>`).join('');
+  try{
+    const r=await fetch('/api/features');
+    const f=await r.json();
+    if(f.schedule) document.getElementById('featSchedule').value=f.schedule[0]+'-'+f.schedule[1];
+    if(f.geo_profiles&&f.geo_profiles.length) sel.value=f.geo_profiles[0];
+    document.getElementById('featMobile').value=f.mobile_count/Math.max(1,(f.mobile_count+(document.getElementById('userCount').textContent|0)));
+    document.getElementById('featSearch').value=f.search_workers||0;
+  }catch(e){}
+}
+async function applyFeatures(){
+  const data={};
+  const sched=document.getElementById('featSchedule').value.trim();
+  data.schedule=sched&&sched!=='off'?sched:null;
+  const geo=document.getElementById('featGeo').value;
+  data.geo=geo||null;
+  data.mobile_ratio=parseFloat(document.getElementById('featMobile').value)||0;
+  data.search_workers=parseInt(document.getElementById('featSearch').value)||0;
+  try{
+    const r=await fetch('/api/features',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    const d=await r.json();
+    const st=document.getElementById('featStatus');
+    if(d.error){st.textContent=d.error;st.style.color='var(--fail)';}
+    else{st.textContent='applied!';st.style.color='var(--accent)';setTimeout(()=>st.textContent='',2000);}
+  }catch(e){document.getElementById('featStatus').textContent='error';}
+}
+async function exportSettings(){
+  try{
+    const [feat,cfg,tld]=await Promise.all([
+      fetch('/api/features').then(r=>r.json()),
+      fetch('/api/config').then(r=>r.json()),
+      fetch('/api/tld-filter').then(r=>r.json()),
+    ]);
+    const blob=new Blob([JSON.stringify({features:feat,config:cfg,tld_filter:tld},null,2)],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    a.download='noisy-settings.json';a.click();
+  }catch(e){}
+}
+async function importSettings(input){
+  if(!input.files[0]) return;
+  const text=await input.files[0].text();
+  try{
+    const s=JSON.parse(text);
+    if(s.features) await fetch('/api/features',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s.features)});
+    if(s.config) await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s.config)});
+    if(s.tld_filter&&s.tld_filter.regions) await fetch('/api/tld-filter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({regions:s.tld_filter.regions,custom_tlds:s.tld_filter.tld_filter||[]})});
+    cfgLoaded=false; featLoaded=false; tldFilterLoaded=false;
+  }catch(e){alert('Invalid settings file');}
+  input.value='';
+}
+async function toggleFeat(key, value){
+  const data={};
+  if(key==='schedule') data.schedule=value;
+  else if(key==='geo') data.geo=value;
+  else if(key==='mobile_ratio') data.mobile_ratio=value;
+  else if(key==='search_workers') data.search_workers=value;
+  else if(key==='diurnal') data.diurnal=value;
+  else if(key==='auto_pause') data.auto_pause=value;
+  await fetch('/api/features',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  // Sync form inputs
+  if(key==='schedule') document.getElementById('featSchedule').value=value||'off';
+  if(key==='geo') document.getElementById('featGeo').value=value||'';
+  if(key==='mobile_ratio') document.getElementById('featMobile').value=value;
+  if(key==='search_workers') document.getElementById('featSearch').value=value;
+}
+function clearStats(){
+  document.getElementById('topDomains').innerHTML='<div class="no-data">cleared</div>';
+  document.getElementById('tldDist').innerHTML='<div class="no-data">cleared</div>';
+  fetch('/api/clear-stats',{method:'POST'});
+}
+function clearLog(){
+  document.getElementById('liveLog').innerHTML='<div class="no-data">cleared</div>';
+  fetch('/api/clear-logs',{method:'POST'});
+}
+function clearErrors(){
+  document.getElementById('errList').innerHTML='<div class="no-data">cleared</div>';
+  fetch('/api/clear-logs',{method:'POST'});
+}
+async function resetFeatures(){
+  document.getElementById('featSchedule').value='off';
+  document.getElementById('featGeo').value='';
+  document.getElementById('featMobile').value='0';
+  document.getElementById('featSearch').value='0';
+  await fetch('/api/features',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({schedule:null,geo:null,mobile_ratio:0,search_workers:0,diurnal:true})});
+  document.getElementById('featStatus').textContent='reset!';
+  setTimeout(()=>document.getElementById('featStatus').textContent='',2000);
+}
+// ---- Users ----
+async function addUser(){
+  try{
+    const r=await fetch('/api/users/add',{method:'POST'});
+    const d=await r.json();
+    if(d.error){alert(d.error);return;}
+  }catch(e){}
+}
+async function removeUser(){
+  try{
+    const r=await fetch('/api/users/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+    const d=await r.json();
+    if(d.error){alert(d.error);return;}
+  }catch(e){}
+}
+// ---- TLD Filter ----
+let tldFilterLoaded = false;
+async function loadTldFilter(){
+  try{
+    const r=await fetch('/api/tld-filter');
+    const d=await r.json();
+    const box=document.getElementById('regionCheckboxes');
+    box.innerHTML=d.available_regions.map(r=>
+      `<label class="region-cb"><input type="checkbox" value="${r}" ${d.regions.includes(r)?'checked':''}>${r}</label>`
+    ).join('');
+    // show custom TLDs (those not from region presets)
+    const regionTlds=new Set();
+    // We don't know region contents client-side, just show raw tld_filter minus known
+    document.getElementById('customTlds').value='';
+    // show active filter
+    if(d.tld_filter.length){
+      document.getElementById('tldStatus').innerHTML='Active: <span>'+d.tld_filter.join(', ')+'</span>';
+    }
+  }catch(e){}
+}
+async function applyTldFilter(){
+  const checks=document.querySelectorAll('#regionCheckboxes input:checked');
+  const regions=Array.from(checks).map(c=>c.value);
+  const raw=document.getElementById('customTlds').value;
+  const custom=raw?raw.split(',').map(s=>s.trim().toLowerCase()).filter(Boolean):[];
+  try{
+    const r=await fetch('/api/tld-filter',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({regions,custom_tlds:custom})});
+    const d=await r.json();
+    if(d.status==='ok'){
+      document.getElementById('tldStatus').innerHTML=
+        d.tld_filter&&d.tld_filter.length
+          ?'Active: <span>'+d.tld_filter.join(', ')+'</span> ('+d.filtered+' sites)'
+          :'No filter (all sites)';
+    }
+  }catch(e){document.getElementById('tldStatus').textContent='error';}
 }
 connect();
 </script>

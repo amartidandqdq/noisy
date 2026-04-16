@@ -14,7 +14,7 @@ from typing import List
 
 import aiohttp
 
-from .config import CRUX_TOP_CSV, DEFAULT_CRUX_COUNT, DEFAULT_UA_COUNT, MAX_RESPONSE_BYTES, UA_PAGE_URL
+from .config import CRUX_TOP_CSV, DEFAULT_CRUX_COUNT, DEFAULT_UA_COUNT, MAX_RESPONSE_BYTES, OISD_BIG_URL, OISD_NSFW_URL, UA_PAGE_URL
 from .profiles import SSL_CONTEXT, _UA_FALLBACK
 
 log = logging.getLogger(__name__)
@@ -54,6 +54,76 @@ async def fetch_crux_top_sites(
 
     log.info(f"[FIN] fetch_crux_top_sites | loaded={len(sites)}")
     return sites
+
+
+async def _fetch_oisd_list(session: aiohttp.ClientSession, url: str, name: str) -> List[str]:
+    """Charge une blocklist OISD (format domainswild2)."""
+    log.info(f"[DEBUT] fetch_{name}_blocklist")
+    try:
+        async with session.get(
+            url, ssl=SSL_CONTEXT,
+            timeout=aiohttp.ClientTimeout(total=60),
+        ) as resp:
+            if resp.status >= 400:
+                log.warning(f"[WARN] fetch_{name}_blocklist | status={resp.status}")
+                return []
+            text = await resp.text()
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        log.warning(f"[WARN] fetch_{name}_blocklist | {e}")
+        return []
+
+    domains = [
+        line.strip() for line in text.splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    log.info(f"[FIN] fetch_{name}_blocklist | loaded={len(domains)} domaines")
+    return domains
+
+
+async def fetch_nsfw_blocklist(session: aiohttp.ClientSession) -> List[str]:
+    return await _fetch_oisd_list(session, OISD_NSFW_URL, "nsfw")
+
+
+async def fetch_phishing_blocklist(session: aiohttp.ClientSession) -> List[str]:
+    return await _fetch_oisd_list(session, OISD_BIG_URL, "phishing")
+
+
+def load_browser_history(path: str) -> List[str]:
+    """Charge un historique navigateur (JSON ou TXT, un URL par ligne)."""
+    log.info(f"[DEBUT] load_browser_history | path={path}")
+    import os
+    if not os.path.isfile(path):
+        log.error(f"[ERREUR] load_browser_history | fichier introuvable: {path}")
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            content = f.read().strip()
+    except OSError as e:
+        log.error(f"[ERREUR] load_browser_history | {e}")
+        return []
+
+    urls = []
+    if content.startswith("[") or content.startswith("{"):
+        try:
+            data = json.loads(content)
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, str) and item.startswith("http"):
+                        urls.append(item)
+                    elif isinstance(item, dict):
+                        u = item.get("url") or item.get("URL") or item.get("uri", "")
+                        if u.startswith("http"):
+                            urls.append(u)
+        except json.JSONDecodeError as e:
+            log.error(f"[ERREUR] load_browser_history JSON | {e}")
+    else:
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith("http"):
+                urls.append(line)
+
+    log.info(f"[FIN] load_browser_history | loaded={len(urls)} URLs")
+    return urls
 
 
 async def fetch_user_agents(

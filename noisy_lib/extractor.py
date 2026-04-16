@@ -4,8 +4,8 @@
 
 import logging
 from html.parser import HTMLParser
-from typing import List, Optional
-from urllib.parse import urljoin
+from typing import List, Optional, Set
+from urllib.parse import urljoin, urlsplit
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +27,16 @@ class LinkExtractor(HTMLParser):
                 self.links.append(resolved)
 
 
-def extract_links(html: str, base_url: str, blacklist: Optional[List[str]] = None) -> List[str]:
+def _host_blocked(url: str, domain_blocklist: Set[str]) -> bool:
+    from . import host_in_blocklist
+    return host_in_blocklist(url, domain_blocklist)
+
+
+def extract_links(
+    html: str, base_url: str,
+    blacklist: Optional[List[str]] = None,
+    domain_blocklist: Optional[Set[str]] = None,
+) -> List[str]:
     """Extrait les liens http(s) du HTML, filtre la blacklist."""
     parser = LinkExtractor(base_url)
     try:
@@ -40,4 +49,6 @@ def extract_links(html: str, base_url: str, blacklist: Optional[List[str]] = Non
     links = parser.links
     if blacklist:
         links = [lnk for lnk in links if not any(b in lnk for b in blacklist)]
+    if domain_blocklist:
+        links = [lnk for lnk in links if not _host_blocked(lnk, domain_blocklist)]
     return links

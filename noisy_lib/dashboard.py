@@ -14,8 +14,14 @@ from typing import List, Optional, TYPE_CHECKING
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, PlainTextResponse, JSONResponse
 
-from .config import ALERT_FAIL_THRESHOLD, DASHBOARD_UPDATE_INTERVAL, WEBHOOK_TIMEOUT
-from .profiles import _diurnal_weight
+import random
+
+from .config import (
+    ALERT_FAIL_THRESHOLD, AUTO_PAUSE_FAIL_THRESHOLD, AUTO_PAUSE_MIN_REQUESTS,
+    DASHBOARD_UPDATE_INTERVAL, DEFAULT_URL_BLACKLIST,
+    GENERIC_TLDS, REGION_PRESETS, WEBHOOK_TIMEOUT,
+)
+from .profiles import GEO_PROFILES, UserProfile, _diurnal_weight
 
 if TYPE_CHECKING:
     from .crawler import SharedMetrics, UserCrawler
@@ -26,6 +32,28 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
+SETTINGS_FILE = Path(__file__).parent.parent / ".noisy_settings.json"
+
+
+def _save_settings(data: dict):
+    """Sauvegarde les settings dans .noisy_settings.json."""
+    try:
+        existing = _load_settings()
+        existing.update(data)
+        SETTINGS_FILE.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        log.debug(f"[SETTINGS] sauvegardé: {list(data.keys())}")
+    except Exception as e:
+        log.warning(f"[SETTINGS] erreur sauvegarde: {e}")
+
+
+def _load_settings() -> dict:
+    """Charge les settings persistés."""
+    try:
+        if SETTINGS_FILE.exists():
+            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        log.warning(f"[SETTINGS] erreur lecture: {e}")
+    return {}
 
 
 class MetricsCollector:
@@ -39,6 +67,9 @@ class MetricsCollector:
         ua_pool: "UAPool",
         shared_metrics: "SharedMetrics",
         webhook_url: Optional[str] = None,
+        tld_filter: Optional[set] = None,
+        regions: Optional[List[str]] = None,
+        all_top_sites: Optional[List[str]] = None,
     ):
         self.crawlers = crawlers
         self.shared_visited = shared_visited
@@ -46,10 +77,19 @@ class MetricsCollector:
         self.ua_pool = ua_pool
         self.shared_metrics = shared_metrics
         self.webhook_url = webhook_url
+        self.tld_filter = tld_filter or set()
+        self.regions = regions or []
+        self.all_top_sites = all_top_sites or []
+        self._search_workers = 0
+        self._crawler_tasks: dict = {}  # user_id -> asyncio.Task
+        self._crawler_params: dict = {}  # stored from first crawler
+        self._next_user_id = max((c.profile.user_id for c in crawlers), default=-1) + 1
         self._start_time = time.monotonic()
         self._prev_visited = 0
         self._prev_time = time.monotonic()
         self._alert_fired = False
+        self.auto_pause_enabled = True
+        self._auto_paused = False
 
     def collect(self) -> dict:
         now = time.monotonic()
@@ -81,6 +121,9 @@ class MetricsCollector:
                 "bytes": c.stats["bytes"],
                 "ua": c.profile.ua[:80],
                 "diurnal_weight": round(c.profile.diurnal_weight(), 2),
+                "is_mobile": getattr(c.profile, "is_mobile", False),
+                "geo": getattr(c.profile, "geo", None),
+                "active": getattr(c.profile, "is_active_hour", lambda: True)(),
             })
 
         # Diurnal curve (24 points)
@@ -116,6 +159,8 @@ class MetricsCollector:
             "current_hour": round(hour_now, 1),
             "top_domains": self.shared_metrics.top_domains(20),
             "tld_distribution": self.shared_metrics.tld_distribution(),
+            "category_distribution": self.shared_metrics.category_distribution(),
+            "timing_heatmap": self.shared_metrics.timing_heatmap,
             "recent_errors": list(self.shared_metrics.recent_errors),
             "request_log": [
                 {"ts": e.ts, "user_id": e.user_id, "url": e.url[:100],
@@ -123,14 +168,24 @@ class MetricsCollector:
                 for e in list(self.shared_metrics.request_log)[-50:]
             ],
             "fingerprint": self.shared_metrics.fingerprint_score(),
+            "nsfw_blocklist_size": len(self._crawler_params.get("domain_blocklist", set())) if self._crawler_params else 0,
+            "dns_servers": _get_system_dns(),
             "paused": self.shared_metrics.is_paused,
+            "features": {
+                "schedule": self.crawlers[0].profile.schedule if self.crawlers and hasattr(self.crawlers[0].profile, "schedule") else None,
+                "search_workers": self._search_workers,
+                "mobile_count": sum(1 for c in self.crawlers if getattr(c.profile, "is_mobile", False)),
+                "geo_profiles": sorted(set(getattr(c.profile, "geo", None) for c in self.crawlers if getattr(c.profile, "geo", None))),
+                "diurnal": self.crawlers[0].profile.diurnal_enabled if self.crawlers and hasattr(self.crawlers[0].profile, "diurnal_enabled") else True,
+                "auto_pause": self.auto_pause_enabled,
+            },
         }
 
     def get_runtime_config(self) -> dict:
         if not self.crawlers:
             return {}
         c = self.crawlers[0]
-        return {
+        cfg = {
             "num_users": len(self.crawlers),
             "min_sleep": c.min_sleep,
             "max_sleep": c.max_sleep,
@@ -139,6 +194,11 @@ class MetricsCollector:
             "max_links_per_page": c.max_links_per_page,
             "domain_delay": self.rate_limiter._domain_delay,
         }
+        if self.tld_filter:
+            cfg["tld_filter"] = sorted(self.tld_filter)
+        if self.regions:
+            cfg["regions"] = sorted(self.regions)
+        return cfg
 
     def apply_config(self, data: dict) -> list:
         errors = []
@@ -172,7 +232,224 @@ class MetricsCollector:
                 c.max_links_per_page = safe["max_links_per_page"]
         if "domain_delay" in safe:
             self.rate_limiter.domain_delay = safe["domain_delay"]
+        _save_settings({"config": safe})
         return []
+
+    def restore_saved_settings(self):
+        """Restaure les settings persistés depuis .noisy_settings.json."""
+        saved = _load_settings()
+        if not saved:
+            return
+        restored = []
+        if "features" in saved:
+            try:
+                self.apply_features(saved["features"])
+                restored.append("features")
+            except Exception as e:
+                log.warning(f"[SETTINGS] erreur restore features: {e}")
+        if "config" in saved:
+            try:
+                self.apply_config(saved["config"])
+                restored.append("config")
+            except Exception as e:
+                log.warning(f"[SETTINGS] erreur restore config: {e}")
+        if "tld_filter" in saved:
+            try:
+                tf = saved["tld_filter"]
+                self.apply_tld_filter(tf.get("regions", []), tf.get("custom_tlds", []))
+                restored.append("tld_filter")
+            except Exception as e:
+                log.warning(f"[SETTINGS] erreur restore tld_filter: {e}")
+        if restored:
+            log.info(f"[SETTINGS] restauré: {', '.join(restored)}")
+
+    def set_crawler_params(self, stop_event, top_sites, params: dict):
+        """Stocke les paramètres nécessaires pour créer de nouveaux crawlers."""
+        self._stop_event = stop_event
+        self._filtered_sites = top_sites
+        self._crawler_params = params
+
+    def add_user(self) -> dict:
+        """Crée un nouveau crawler virtuel et le lance."""
+        if not self._crawler_params:
+            return {"error": "paramètres crawler non initialisés"}
+
+        from .crawler import UserCrawler
+        p = self._crawler_params
+        uid = self._next_user_id
+        self._next_user_id += 1
+
+        ua = self.ua_pool.sample(1, rng=random.Random())[0]
+        profile = UserProfile(user_id=uid, ua=ua, rng=random.Random())
+        sites = list(self._filtered_sites)
+        profile.rng.shuffle(sites)
+
+        crawler = UserCrawler(
+            profile=profile, shared_root_urls=sites[:500],
+            shared_visited=self.shared_visited, rate_limiter=self.rate_limiter,
+            max_depth=p["max_depth"], concurrency=p["concurrency"],
+            min_sleep=p["min_sleep"], max_sleep=p["max_sleep"],
+            max_queue_size=p["max_queue_size"], max_links_per_page=p["max_links_per_page"],
+            url_blacklist=DEFAULT_URL_BLACKLIST, stop_event=self._stop_event,
+            total_connections=p["total_connections"],
+            connections_per_host=p["connections_per_host"],
+            keepalive_timeout=p["keepalive_timeout"],
+            shared_metrics=self.shared_metrics,
+            domain_blocklist=p.get("domain_blocklist", set()),
+        )
+        self.crawlers.append(crawler)
+        task = asyncio.create_task(crawler.run())
+        self._crawler_tasks[uid] = task
+        log.info(f"[DASHBOARD] user {uid} ajouté (total: {len(self.crawlers)})")
+        return {"status": "ok", "user_id": uid, "total_users": len(self.crawlers)}
+
+    async def remove_user(self, user_id: Optional[int] = None) -> dict:
+        """Arrête et supprime un crawler. Si user_id=None, supprime le dernier."""
+        if len(self.crawlers) <= 1:
+            return {"error": "impossible de supprimer le dernier user"}
+
+        target = None
+        if user_id is not None:
+            target = next((c for c in self.crawlers if c.profile.user_id == user_id), None)
+            if not target:
+                return {"error": f"user {user_id} non trouvé"}
+        else:
+            target = self.crawlers[-1]
+
+        uid = target.profile.user_id
+        self.crawlers.remove(target)
+        if uid in self._crawler_tasks:
+            self._crawler_tasks[uid].cancel()
+            del self._crawler_tasks[uid]
+        await target.close()
+        log.info(f"[DASHBOARD] user {uid} supprimé (total: {len(self.crawlers)})")
+        return {"status": "ok", "removed_user_id": uid, "total_users": len(self.crawlers)}
+
+    def apply_features(self, data: dict) -> dict:
+        """Applique les features stealth live."""
+        changes = []
+
+        # Schedule
+        if "schedule" in data:
+            sched = data["schedule"]
+            if sched is None or sched == "":
+                for c in self.crawlers:
+                    c.profile.schedule = None
+                changes.append("schedule=off")
+            else:
+                try:
+                    parts = str(sched).split("-")
+                    s, e = int(parts[0]), int(parts[1])
+                    if 0 <= s <= 23 and 0 <= e <= 23:
+                        for c in self.crawlers:
+                            c.profile.schedule = (s, e)
+                        changes.append(f"schedule={s}h-{e}h")
+                except (ValueError, IndexError):
+                    return {"error": f"schedule invalide: {sched}"}
+
+        # Geo
+        if "geo" in data:
+            geo = data["geo"] if data["geo"] else None
+            if geo and geo not in GEO_PROFILES:
+                return {"error": f"geo inconnu: {geo}"}
+            for c in self.crawlers:
+                c.profile.geo = geo
+                if geo:
+                    gd = GEO_PROFILES[geo]
+                    c.profile._accept_lang = gd["lang"]
+                    c.profile._tz_offset = gd["tz_offset"]
+                else:
+                    c.profile._accept_lang = "en-US,en;q=0.9"
+                    c.profile._tz_offset = 0
+            changes.append(f"geo={geo or 'off'}")
+
+        # Mobile ratio
+        if "mobile_ratio" in data:
+            ratio = float(data["mobile_ratio"])
+            if not (0 <= ratio <= 1):
+                return {"error": "mobile_ratio doit être 0-1"}
+            from .profiles import MOBILE_UA_POOL
+            n_mobile = int(len(self.crawlers) * ratio)
+            for i, c in enumerate(self.crawlers):
+                should_mobile = i >= (len(self.crawlers) - n_mobile)
+                c.profile.is_mobile = should_mobile
+                if should_mobile and "Mobile" not in c.profile.ua:
+                    c.profile.ua = random.choice(MOBILE_UA_POOL)
+            changes.append(f"mobile={n_mobile}/{len(self.crawlers)}")
+
+        # Search workers
+        if "search_workers" in data:
+            target = int(data["search_workers"])
+            current = self._search_workers
+            if target > current:
+                from .workers import search_noise_worker
+                bl = self._crawler_params.get("domain_blocklist", set()) if self._crawler_params else set()
+                for i in range(current, target):
+                    task = asyncio.create_task(search_noise_worker(self._stop_event, worker_id=i, domain_blocklist=bl))
+                    self._crawler_tasks[f"search_{i}"] = task
+                changes.append(f"search_workers={current}->{target}")
+            elif target < current:
+                for i in range(target, current):
+                    key = f"search_{i}"
+                    if key in self._crawler_tasks:
+                        self._crawler_tasks[key].cancel()
+                        del self._crawler_tasks[key]
+                changes.append(f"search_workers={current}->{target}")
+            self._search_workers = target
+
+        # Auto-pause
+        if "auto_pause" in data:
+            self.auto_pause_enabled = bool(data["auto_pause"])
+            changes.append(f"auto_pause={'on' if self.auto_pause_enabled else 'off'}")
+
+        # Diurnal
+        if "diurnal" in data:
+            enabled = bool(data["diurnal"])
+            for c in self.crawlers:
+                c.profile.diurnal_enabled = enabled
+            changes.append(f"diurnal={'on' if enabled else 'off'}")
+
+        log.info(f"[FEATURES] {', '.join(changes)}")
+        _save_settings({"features": data})
+        return {"status": "ok", "changes": changes}
+
+    def apply_tld_filter(self, regions: List[str], custom_tlds: List[str]) -> dict:
+        """Applique un nouveau filtre TLD live sur les crawlers."""
+        allowed = set()
+        for r in regions:
+            allowed |= REGION_PRESETS.get(r, set())
+        allowed |= {t.strip().lower() for t in custom_tlds if t.strip()}
+        self.regions = regions
+        self.tld_filter = allowed
+
+        if not self.all_top_sites:
+            return {"status": "ok", "filtered": 0, "message": "pas de sites CRUX chargés"}
+
+        if allowed:
+            filtered = [s for s in self.all_top_sites
+                        if _extract_tld_from_url(s) in GENERIC_TLDS or _extract_tld_from_url(s) in allowed]
+        else:
+            filtered = list(self.all_top_sites)
+
+        for c in self.crawlers:
+            shuffled = list(filtered)
+            c.rng.shuffle(shuffled)
+            c.root_urls = set(shuffled[:500])
+            # Drain queue and refill with filtered sites
+            while not c.queue.empty():
+                try:
+                    c.queue.get_nowait()
+                    c.queue.task_done()
+                except Exception:
+                    break
+            for url in shuffled[:200]:
+                try:
+                    c.queue.put_nowait((url, 0, None))
+                except Exception:
+                    break
+        log.info(f"[TLD] Filtre live appliqué: {len(filtered)} sites (ccTLD: {sorted(allowed) if allowed else 'aucun'})")
+        _save_settings({"tld_filter": {"regions": regions, "custom_tlds": custom_tlds}})
+        return {"status": "ok", "filtered": len(filtered), "tld_filter": sorted(allowed)}
 
     def prometheus_metrics(self) -> str:
         lines = []
@@ -202,6 +479,31 @@ class MetricsCollector:
             lines.append(f'noisy_user_visited{{user="{uid}"}} {c.stats["visited"]}')
             lines.append(f'noisy_user_failed{{user="{uid}"}} {c.stats["failed"]}')
         return "\n".join(lines) + "\n"
+
+
+def _get_system_dns() -> List[str]:
+    """Détecte les serveurs DNS système."""
+    try:
+        import subprocess
+        import platform
+        if platform.system() == "Windows":
+            out = subprocess.check_output(
+                ["powershell", "-Command",
+                 "Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object -ExpandProperty ServerAddresses | Sort-Object -Unique"],
+                timeout=5, text=True, stderr=subprocess.DEVNULL,
+            )
+            return [l.strip() for l in out.strip().splitlines() if l.strip()]
+        else:
+            with open("/etc/resolv.conf") as f:
+                return [l.split()[1] for l in f if l.strip().startswith("nameserver")]
+    except Exception:
+        return ["unknown"]
+
+
+def _extract_tld_from_url(url: str) -> str:
+    from urllib.parse import urlsplit
+    host = urlsplit(url).hostname or ""
+    return host.rsplit(".", 1)[-1] if "." in host else ""
 
 
 def create_app(collector: MetricsCollector) -> FastAPI:
@@ -235,6 +537,63 @@ def create_app(collector: MetricsCollector) -> FastAPI:
         if errors:
             return JSONResponse(status_code=400, content={"errors": errors})
         return {"status": "ok", "config": collector.get_runtime_config()}
+
+    @app.post("/api/features")
+    async def set_features(data: dict):
+        result = collector.apply_features(data)
+        if "error" in result:
+            return JSONResponse(status_code=400, content=result)
+        return result
+
+    @app.get("/api/features")
+    async def get_features():
+        return collector.collect().get("features", {})
+
+    @app.post("/api/tld-filter")
+    async def set_tld_filter(data: dict):
+        regions = data.get("regions", [])
+        custom_tlds = data.get("custom_tlds", [])
+        for r in regions:
+            if r not in REGION_PRESETS:
+                return JSONResponse(status_code=400, content={"error": f"région inconnue: {r}"})
+        result = collector.apply_tld_filter(regions, custom_tlds)
+        return result
+
+    @app.get("/api/tld-filter")
+    async def get_tld_filter():
+        return {
+            "regions": sorted(collector.regions),
+            "tld_filter": sorted(collector.tld_filter),
+            "available_regions": sorted(REGION_PRESETS.keys()),
+        }
+
+    @app.post("/api/users/add")
+    async def add_user():
+        result = collector.add_user()
+        if "error" in result:
+            return JSONResponse(status_code=400, content=result)
+        return result
+
+    @app.post("/api/users/remove")
+    async def remove_user(data: dict = None):
+        uid = data.get("user_id") if data else None
+        result = await collector.remove_user(uid)
+        if "error" in result:
+            return JSONResponse(status_code=400, content=result)
+        return result
+
+    @app.post("/api/clear-logs")
+    async def clear_logs():
+        collector.shared_metrics.request_log.clear()
+        collector.shared_metrics.recent_errors.clear()
+        return {"status": "ok"}
+
+    @app.post("/api/clear-stats")
+    async def clear_stats():
+        collector.shared_metrics.domain_stats.clear()
+        collector.shared_metrics.tld_counts.clear()
+        collector.shared_metrics.category_counts.clear()
+        return {"status": "ok"}
 
     @app.post("/api/pause")
     async def pause():
@@ -271,6 +630,19 @@ def create_app(collector: MetricsCollector) -> FastAPI:
                         await _fire_webhook(collector.webhook_url, "alert_high_fail_rate", data["aggregate"])
                 elif not data["aggregate"]["alert_active"]:
                     collector._alert_fired = False
+                # Auto-pause on fail spike
+                a = data["aggregate"]
+                total = a["visited"] + a["failed"]
+                if (collector.auto_pause_enabled and not collector._auto_paused
+                        and total >= AUTO_PAUSE_MIN_REQUESTS
+                        and a["fail_pct"] >= AUTO_PAUSE_FAIL_THRESHOLD):
+                    collector.shared_metrics.pause()
+                    collector._auto_paused = True
+                    log.warning(f"[AUTO-PAUSE] fail%={a['fail_pct']:.1f}% >= {AUTO_PAUSE_FAIL_THRESHOLD}%")
+                    if collector.webhook_url:
+                        await _fire_webhook(collector.webhook_url, "auto_paused", a)
+                elif collector._auto_paused and a["fail_pct"] < AUTO_PAUSE_FAIL_THRESHOLD:
+                    collector._auto_paused = False
                 await asyncio.sleep(DASHBOARD_UPDATE_INTERVAL)
         except WebSocketDisconnect:
             log.info("[DASHBOARD] client WebSocket déconnecté")
@@ -297,6 +669,9 @@ async def start_dashboard(collector: MetricsCollector, port: int, host: str = "1
     """Lance le serveur uvicorn en tâche de fond asyncio."""
     import uvicorn
 
+    if host != "127.0.0.1":
+        log.warning(f"[DASHBOARD] ⚠ bind sur {host} — AUCUNE authentification ! "
+                    f"Toute machine du réseau peut contrôler le crawler.")
     app = create_app(collector)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)

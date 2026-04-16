@@ -6,9 +6,9 @@ import os
 
 import pytest
 
-# Make noisy.py importable from project root
+# Make noisy_lib importable from project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from noisy import validate_args
+from noisy_lib.config_loader import validate_args
 
 from noisy_lib.config import (
     DEFAULT_CONNECTIONS_PER_HOST,
