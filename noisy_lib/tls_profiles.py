@@ -42,11 +42,11 @@ _EC_GROUPS = [
 
 
 def _build_default_context() -> ssl.SSLContext:
-    """Contexte SSL par défaut (pas de rotation)."""
+    """Contexte SSL par défaut (pas de rotation). HTTP/1.1 only — utilisé par aiohttp."""
     ctx = ssl.create_default_context()
     ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0)
     try:
-        ctx.set_alpn_protocols(["h2", "http/1.1"])
+        ctx.set_alpn_protocols(["http/1.1"])
     except Exception:
         pass
     return ctx
