@@ -14,8 +14,8 @@ from typing import List
 
 import aiohttp
 
-from .config import CRUX_TOP_CSV, DEFAULT_CRUX_COUNT, DEFAULT_UA_COUNT, MAX_RESPONSE_BYTES, OISD_BIG_URL, OISD_NSFW_URL, UA_PAGE_URL
-from .profiles import SSL_CONTEXT, _UA_FALLBACK
+from .config import CRUX_TOP_CSV, DEFAULT_CRUX_COUNT, DEFAULT_UA_COUNT, MAX_RESPONSE_BYTES, OISD_BIG_URL, OISD_NSFW_URL, UA_FALLBACK, UA_PAGE_URL
+from .profiles import SSL_CONTEXT
 
 log = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ async def fetch_user_agents(
     try:
         async with session.get(
             UA_PAGE_URL, timeout=aiohttp.ClientTimeout(total=15),
-            ssl=SSL_CONTEXT, headers={"User-Agent": rng.choice(_UA_FALLBACK)},
+            ssl=SSL_CONTEXT, headers={"User-Agent": rng.choice(UA_FALLBACK)},
         ) as resp:
             if resp.status >= 400:
                 log.warning(f"[WARN] fetch_user_agents | status={resp.status}")

@@ -146,6 +146,59 @@ def categorize_domain(domain: str) -> str:
                 return cat
     return "other"
 
+# ---- GEO PROFILES ----
+GEO_PROFILES = {
+    "europe_fr": {"lang": "fr-FR,fr;q=0.9,en;q=0.5", "tz_offset": 1},
+    "europe_de": {"lang": "de-DE,de;q=0.9,en;q=0.5", "tz_offset": 1},
+    "europe_es": {"lang": "es-ES,es;q=0.9,en;q=0.5", "tz_offset": 1},
+    "europe_it": {"lang": "it-IT,it;q=0.9,en;q=0.5", "tz_offset": 1},
+    "europe_uk": {"lang": "en-GB,en;q=0.9", "tz_offset": 0},
+    "europe_nl": {"lang": "nl-NL,nl;q=0.9,en;q=0.5", "tz_offset": 1},
+    "europe_pl": {"lang": "pl-PL,pl;q=0.9,en;q=0.3", "tz_offset": 1},
+    "europe_pt": {"lang": "pt-PT,pt;q=0.9,en;q=0.5", "tz_offset": 0},
+    "europe_se": {"lang": "sv-SE,sv;q=0.9,en;q=0.5", "tz_offset": 1},
+    "americas_us": {"lang": "en-US,en;q=0.9", "tz_offset": -5},
+    "americas_br": {"lang": "pt-BR,pt;q=0.9,en;q=0.5", "tz_offset": -3},
+    "americas_mx": {"lang": "es-MX,es;q=0.9,en;q=0.3", "tz_offset": -6},
+    "americas_ca": {"lang": "en-CA,en;q=0.9,fr;q=0.5", "tz_offset": -5},
+    "asia_jp": {"lang": "ja-JP,ja;q=0.9,en;q=0.3", "tz_offset": 9},
+    "asia_kr": {"lang": "ko-KR,ko;q=0.9,en;q=0.3", "tz_offset": 9},
+    "asia_cn": {"lang": "zh-CN,zh;q=0.9,en;q=0.3", "tz_offset": 8},
+    "asia_in": {"lang": "hi-IN,hi;q=0.9,en;q=0.7", "tz_offset": 5},
+    "middle_east_ae": {"lang": "ar-AE,ar;q=0.9,en;q=0.5", "tz_offset": 4},
+    "middle_east_tr": {"lang": "tr-TR,tr;q=0.9,en;q=0.3", "tz_offset": 3},
+    "africa_za": {"lang": "en-ZA,en;q=0.9,af;q=0.5", "tz_offset": 2},
+    "oceania_au": {"lang": "en-AU,en;q=0.9", "tz_offset": 10},
+}
+
+# ---- MOBILE UAs ----
+MOBILE_UA_POOL = [
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; SM-A546B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 7a) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/122.0.6261.89 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 14; SAMSUNG SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/23.0 Chrome/115.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; 22101316G) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPad; CPU OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1",
+]
+
+# ---- FALLBACK UAs ----
+UA_FALLBACK = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.3; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15",
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+]
+
 # ---- BLOCKLISTS OISD ----
 OISD_NSFW_URL = "https://nsfw.oisd.nl/domainswild2"
 OISD_BIG_URL = "https://big.oisd.nl/domainswild2"

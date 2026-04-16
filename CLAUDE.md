@@ -35,25 +35,58 @@ pip install -r requirements-dev.txt
 python -m pytest tests/ -v              # 67 tests, < 1s
 ```
 
+## Règles de modularité (PROTECTED)
+
+- **Max 180 lignes par fichier** (sauf `config.py` données pures, `dashboard_collector.py` god-object assumé)
+- **1 fichier = 1 responsabilité** — si un fichier fait 2 choses, splitter
+- **Données pures → `config.py`** (constantes, UAs, geo profiles, catégories, blocklists URLs)
+- **Logique comportementale → fichier dédié** (profiles.py, crawler.py, etc.)
+- **Utilitaires partagés → `__init__.py`** (`host_in_blocklist`, `extract_tld`)
+- **Pas d'imports lazy** sauf pour éviter circular imports (dashboard ↔ crawler)
+- **Pas d'accès `_private`** cross-fichier — utiliser properties/getters
+- **`TYPE_CHECKING`** pour les type hints circulaires
+
 ## Architecture — 1 fichier = 1 responsabilité
 
 ```
-noisy.py                  → Orchestration + entry point (286 lignes)
+noisy.py                  → Orchestration + entry point (281 lignes)
 noisy_lib/
-  config.py               → Constantes, catégories, blocklists (165 lignes)
+  __init__.py             → Utilitaires partagés: host_in_blocklist, extract_tld (19 lignes)
+  config.py               → TOUTES constantes + données pures: geo, UAs, catégories (218 lignes)
   config_loader.py        → Parser CLI + validation + lecture JSON (138 lignes)
   structures.py           → LRUSet / BoundedDict / TTLDict (90 lignes)
-  profiles.py             → UserProfile / UAPool / geo / stealth headers (271 lignes)
-  extractor.py            → Extraction liens HTML + blacklist (55 lignes)
+  metrics.py              → SharedMetrics cross-crawler (127 lignes)
+  profiles.py             → UserProfile / UAPool / stealth headers / diurnal (200 lignes)
+  extractor.py            → Extraction liens HTML + blacklist (54 lignes)
   fetchers.py             → Fetch CRUX / UAs / OISD blocklists / history (169 lignes)
   rate_limiter.py         → Délai inter-requêtes par domaine (54 lignes)
   fetch_client.py         → HTTP GET avec retry exponentiel (74 lignes)
-  crawler.py              → UserCrawler + SharedMetrics + categories (348 lignes)
-  workers.py              → DNS / stats / UA refresh / HEAD / search noise (174 lignes)
-  dashboard.py            → FastAPI + WebSocket + feature control (675 lignes)
-  static/dashboard.html   → Single-file dashboard UI (942 lignes)
+  crawler.py              → UserCrawler uniquement (213 lignes)
+  workers.py              → DNS / stats / UA refresh / HEAD / search noise (181 lignes)
+  dashboard_collector.py  → MetricsCollector + settings persistence (501 lignes)
+  dashboard.py            → FastAPI routes + WebSocket + webhook (198 lignes)
+  static/dashboard.html   → Single-file dashboard UI
 start.bat                 → Windows one-click launcher
 start.command             → macOS one-click launcher
+```
+
+## Graphe de dépendances (DAG, pas de cycles)
+
+```
+config.py (feuille — 0 import noisy_lib)
+  ← config_loader.py
+  ← structures.py (0 import)
+  ← metrics.py ← config
+  ← profiles.py ← config
+  ← rate_limiter.py ← config, structures
+  ← fetch_client.py ← config, profiles
+  ← extractor.py ← __init__
+  ← fetchers.py ← config, profiles
+  ← crawler.py ← metrics, config, extractor, fetch_client, profiles, rate_limiter, structures
+  ← workers.py ← __init__, config, fetchers, profiles
+  ← dashboard_collector.py ← config, profiles, workers
+  ← dashboard.py ← config, dashboard_collector
+  ← noisy.py (racine — importe tout)
 ```
 
 ## Règle de modification
@@ -69,13 +102,16 @@ start.command             → macOS one-click launcher
 | Modèle d'activité heure/jour | `profiles.py` (_diurnal_weight) |
 | Sources de sites/UA | `fetchers.py` |
 | Stats ou bruit DNS/HEAD/search | `workers.py` |
-| Dashboard web / API / métriques | `dashboard.py` + `static/dashboard.html` |
-| Métriques agrégées cross-crawler | `crawler.py` (SharedMetrics) |
+| Dashboard routes / API | `dashboard.py` |
+| Dashboard métriques / features | `dashboard_collector.py` |
+| Métriques agrégées cross-crawler | `metrics.py` (SharedMetrics) |
 | Blocklists OISD (NSFW/phishing) | `fetchers.py` + `config.py` (OISD URLs) |
-| Geo profiles / stealth headers | `profiles.py` (GEO_PROFILES, SEC_*) |
+| Geo profiles / mobile UAs / fallback UAs | `config.py` (GEO_PROFILES, MOBILE_UA_POOL, UA_FALLBACK) |
+| Stealth headers (Sec-Fetch, Sec-CH-UA) | `profiles.py` |
 | TLD/région filter | `config.py` (REGION_PRESETS) + `noisy.py` |
-| Features toggle (dashboard) | `dashboard.py` (apply_features) |
-| Settings persistence | `dashboard.py` (.noisy_settings.json) |
+| Features toggle (dashboard) | `dashboard_collector.py` (apply_features) |
+| Settings persistence | `dashboard_collector.py` (.noisy_settings.json) |
+| Utilitaire blocklist/TLD | `__init__.py` |
 
 ## Dashboard — fonctionnalités
 
@@ -108,10 +144,11 @@ start.command             → macOS one-click launcher
 
 | Classe | Fichier | Rôle |
 |--------|---------|------|
-| `SharedMetrics` | `crawler.py` | Métriques partagées : request_log, domain_stats, tld_counts, category_counts, timing_heatmap, fingerprint_score(), pause/resume |
+| `SharedMetrics` | `metrics.py` | Métriques partagées : request_log, domain_stats, tld_counts, category_counts, timing_heatmap, fingerprint_score(), pause/resume |
+| `RequestLogEntry` | `metrics.py` | namedtuple pour le log de requêtes |
 | `FetchResult` | `fetch_client.py` | Résultat HTTP avec status, html, bytes_received, error_msg, is_client_error, is_server_error |
-| `MetricsCollector` | `dashboard.py` | Agrège stats crawlers → JSON, feature control, settings persistence, TLD filter, user add/remove |
-| `RequestLogEntry` | `crawler.py` | namedtuple pour le log de requêtes |
+| `MetricsCollector` | `dashboard_collector.py` | Agrège stats crawlers → JSON, feature control, settings persistence, TLD filter, user add/remove |
+| `UserCrawler` | `crawler.py` | Crawl par utilisateur virtuel avec queue, semaphore, rate limiting |
 | `UserProfile` | `profiles.py` | Profil utilisateur : UA, geo, mobile, schedule, stealth headers, fingerprint rotation |
 
 ## Headers obligatoires (tout fichier noisy_lib)

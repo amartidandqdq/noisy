@@ -5,14 +5,17 @@
 import asyncio
 import logging
 import random
+import re
 import socket
 import time
 from typing import List, TYPE_CHECKING
 
+import aiohttp
+
 from . import host_in_blocklist
-from .config import DEFAULT_DNS_MAX_SLEEP, DEFAULT_DNS_MIN_SLEEP, SEARCH_ENGINES, SEARCH_WORDS
+from .config import DEFAULT_DNS_MAX_SLEEP, DEFAULT_DNS_MIN_SLEEP, SEARCH_ENGINES, SEARCH_WORDS, UA_FALLBACK
 from .fetchers import fetch_user_agents
-from .profiles import _diurnal_weight
+from .profiles import SSL_CONTEXT, _diurnal_weight
 
 if TYPE_CHECKING:
     from .crawler import UserCrawler
@@ -72,7 +75,6 @@ async def refresh_user_agents_loop(
     ua_pool: "UAPool",
 ) -> None:
     """Rafraîchit le pool UA et tourne les agents par utilisateur."""
-    import aiohttp
     log.info(f"[DEBUT] refresh_user_agents_loop | interval={ua_refresh_seconds}s")
     await asyncio.sleep(ua_refresh_seconds)
     async with aiohttp.ClientSession() as session:
@@ -93,20 +95,17 @@ async def search_noise_worker(
     domain_blocklist: set = None,
 ) -> None:
     """Simule des recherches web avec des mots aléatoires."""
-    import aiohttp as _aiohttp
-    import re as _re
-    from .profiles import SSL_CONTEXT, _UA_FALLBACK
     log.info(f"[DEBUT] search_noise_worker | id={worker_id}")
     rng = random.Random()
-    timeout = _aiohttp.ClientTimeout(total=15)
-    async with _aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=15)
+    async with aiohttp.ClientSession() as session:
         while not stop_event.is_set():
             # Build random query (2-4 words)
             n_words = rng.randint(2, 4)
             query = " ".join(rng.sample(SEARCH_WORDS, min(n_words, len(SEARCH_WORDS))))
             engine = rng.choice(SEARCH_ENGINES)
             url = engine.format(query=query.replace(" ", "+"))
-            ua = rng.choice(_UA_FALLBACK)
+            ua = rng.choice(UA_FALLBACK)
             headers = {
                 "User-Agent": ua,
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -121,7 +120,7 @@ async def search_noise_worker(
                         raw = await resp.content.read(256 * 1024)
                         text = raw.decode(resp.charset or "utf-8", errors="replace")
                         # Extract result links and visit 1-3
-                        links = _re.findall(r'https?://[^\s"<>]+', text)
+                        links = re.findall(r'https?://[^\s"<>]+', text)
                         links = [l for l in links if not any(
                             s in l for s in ("google.", "bing.", "duckduckgo.", "yahoo.", "microsoft.")
                         )]
@@ -157,18 +156,16 @@ async def http_noise_worker(
     domain_blocklist: set = None,
 ) -> None:
     """Envoie des HEAD HTTP aléatoires pour diversifier le mix de méthodes (read-only)."""
-    import aiohttp as _aiohttp
-    from .profiles import SSL_CONTEXT, _UA_FALLBACK
     log.info(f"[DEBUT] http_noise_worker | id={worker_id}")
     rng = random.Random()
-    timeout = _aiohttp.ClientTimeout(total=10)
-    async with _aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession() as session:
         while not stop_event.is_set():
             host = rng.choice(domains)
             if domain_blocklist and host_in_blocklist(f"https://{host}/", domain_blocklist):
                 continue
             url = f"https://{host}/"
-            ua = rng.choice(_UA_FALLBACK)
+            ua = rng.choice(UA_FALLBACK)
             headers = {"User-Agent": ua}
             try:
                 async with session.head(
