@@ -1,13 +1,18 @@
 # Multi-stage build pour noisy + dashboard
-FROM python:3.12-slim AS builder
+# Base sur python:3.13-slim-trixie (Debian 13) — patches openssl/tar plus recents
+FROM python:3.13-slim-trixie AS builder
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc libffi-dev \
+RUN apt-get update \
+    && apt-get -y upgrade \
+    && apt-get install -y --no-install-recommends gcc libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
+
+# Pip >=25.3 corrige CVE-2025-8869 + CVE-2026-1703
+RUN pip install --no-cache-dir --upgrade "pip>=25.3" setuptools wheel
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
@@ -19,11 +24,12 @@ RUN find /app/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null; \
     true
 
 # -------------------------
-FROM python:3.12-slim
+FROM python:3.13-slim-trixie
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libffi8 ca-certificates \
+RUN apt-get update \
+    && apt-get -y upgrade \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r noisy && useradd -r -g noisy -d /app noisy
 
