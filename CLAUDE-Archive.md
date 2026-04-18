@@ -67,3 +67,51 @@ Référence historique uniquement — voir CLAUDE.md pour l'état courant.
 - **Bug fixes UX** : geo/schedule/diurnal hérités par `add_user()`, `is_mobile_ua()` détecté de l'UA (plus de "desktop + UA iPhone"), depth_model en fourchettes par session
 
 ---
+
+## Archived: 2026-04-18
+
+### Headers + Pattern logging conventions
+
+## Headers obligatoires (tout fichier noisy_lib)
+```python
+# nom.py - But en 5 mots
+# IN: x | OUT: y | MODIFIE: z
+# APPELÉ PAR: a | APPELLE: b
+```
+
+## Pattern logging uniforme
+```python
+log = logging.getLogger(__name__)
+
+async def ma_fonction(x):
+    log.info(f"[DEBUT] ma_fonction | {x=}")
+    try:
+        result = ...
+        log.info(f"[FIN] ma_fonction | {result=}")
+        return result
+    except Exception as e:
+        log.error(f"[ERREUR] ma_fonction | {e}")
+        raise
+```
+
+
+---
+
+### Décisions clés (historiques stables)
+
+| Rate limiting | 1 `DomainRateLimiter` partagé entre tous crawlers | Évite que 5 users frappent le même domaine simultanément |
+| Retry HTTP | Uniquement 5xx + exceptions réseau, pas 4xx | 4xx = erreur client intentionnelle, pas transitoire |
+| Blacklist URL | Double filtre : avant fetch + après extraction | Économise requêtes ET évite d'enqueue des URLs inutiles |
+| Domain locks | Bounded dict 50K + FIFO eviction | Évite memory leak sur longues sessions |
+| Config file | `--config` explicite, pas d'auto-load | Comportement prévisible |
+| Dashboard stack | FastAPI + WebSocket + vanilla HTML/CSS/JS multi-files | Pas de build step, séparation logique sans dépendances |
+| Metrics catégorisation | 4xx/5xx/network séparés | Évite inflation artificielle du fail% (4xx ≠ panne) |
+| HTTP noise | HEAD only (pas POST) | Lecture seule, aucun effet secondaire sur les serveurs cibles |
+| Dashboard bind | 127.0.0.1 par défaut | Pas d'auth, donc pas d'exposition réseau |
+| Domain health threshold | 20% min, 10 samples min | Évite skip prématuré + permet recovery |
+| Blocklist 2 niveaux | domain_blocklist (set) + url_blacklist (list) | O(1) pour ~1.08M domaines OISD+Hagezi, substring pour patterns courts |
+| TLD generic passthrough | .com/.net/.org toujours inclus | Filtre TLD ne bloque pas les sites internationaux sur gTLD |
+| Settings persistence | JSON file, pas DB | Simple, portable, pas de dépendance |
+
+---
+

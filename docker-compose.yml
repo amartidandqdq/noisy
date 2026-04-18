@@ -1,0 +1,17 @@
+services:
+  noisy:
+    build: .
+    container_name: noisy
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Persiste les settings dashboard entre restarts
+      - ./.noisy_settings.json:/app/.noisy_settings.json
+      # Persiste les cookies (optionnel)
+      - noisy_cookies:/app/cookies
+    # Override de la commande par defaut au besoin
+    # command: ["--dashboard", "--dashboard-host", "0.0.0.0", "--num_users", "10"]
+
+volumes:
+  noisy_cookies:

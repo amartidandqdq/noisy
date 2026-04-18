@@ -302,9 +302,12 @@ UA_FALLBACK = [
     "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
 ]
 
-# ---- BLOCKLISTS OISD ----
+# ---- BLOCKLISTS ----
+# Mettre une URL a "" (chaine vide) pour desactiver la blocklist correspondante.
 OISD_NSFW_URL = "https://nsfw.oisd.nl/domainswild2"
 OISD_BIG_URL = "https://big.oisd.nl/domainswild2"
+HAGEZI_GAMBLING_URL = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/gambling-onlydomains.txt"
+HAGEZI_PIRACY_URL = "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/anti.piracy-onlydomains.txt"
 
 # ---- URL BLACKLIST ----
 DEFAULT_URL_BLACKLIST = [

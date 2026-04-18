@@ -2,6 +2,11 @@
 
 const H = 60, rpsH = [], visH = [];
 
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 function fmt(n) {
   if (n >= 1e6) return (n/1e6).toFixed(1)+'M';
   if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
@@ -125,14 +130,14 @@ function renderUsers(d) {
     tb.innerHTML=d.users.map(u=>`<tr>
       <td class="uid">U${u.id}</td>
       <td style="color:${u.is_mobile?'var(--warn)':'var(--info)'}">${u.is_mobile?'mobile':'desktop'}</td>
-      <td style="color:var(--text-dim)">${u.geo||'-'}</td>
+      <td style="color:var(--text-dim)">${esc(u.geo)||'-'}</td>
       <td><span style="color:${u.active?'var(--accent)':'var(--fail)'}">${u.active?'active':'sleep'}</span></td>
       <td>${fmt(u.visited)}</td><td>${fmt(u.failed)}</td>
       <td class="tc4">${fmt(u.client_errors)}</td><td class="tc5">${fmt(u.server_errors)}</td>
       <td class="tcn">${fmt(u.network_errors)}</td><td>${fmt(u.queued)}</td>
       <td>${fmtB(u.bytes)}</td>
       <td><div class="dbar-w"><div class="dbar"><div class="dfill" style="width:${u.diurnal_weight*100}%"></div></div><span class="dval">${u.diurnal_weight}</span></div></td>
-      <td class="ua-cell" title="${u.ua}">${u.ua}</td>
+      <td class="ua-cell" title="${esc(u.ua)}">${esc(u.ua)}</td>
     </tr>`).join('');
   }
 }
@@ -144,6 +149,7 @@ const FEAT_GROUPS = [
     ['realistic_depth', 'Realistic Depth', '50-70% bounce / 20-30% short / 10-25% deep (re-rolled per session)'],
     ['referer_chains', 'Referer Chains', 'Search/direct/social/cross-site referers'],
     ['asset_fetching', 'Asset Fetching', 'Partial download of images/CSS/JS'],
+    ['cookie_consent', 'Cookie Consent', 'Detecte CMP (OneTrust/Cookiebot/Didomi…) et fire endpoints consent'],
     ['bandwidth_throttle', 'Bandwidth Throttle', 'Token bucket (fiber/4G/ADSL)'],
     ['auto_pause', 'Auto-Pause', 'Pause auto si fail% > 50%'],
     ['diurnal', 'Diurnal Curve', 'Modèle 24h (pic midi, creux nuit)'],
@@ -158,26 +164,35 @@ const FEAT_GROUPS = [
   ['Anti-DPI', [
     ['ech', 'ECH (Encrypted SNI)', 'curl_cffi BoringSSL — masque le SNI du FAI'],
     ['stream_noise', 'Stream Noise', 'Long CDN connections simulating video'],
+    ['quic_probe', 'QUIC / HTTP/3', 'UDP/443 probes vers CDN QUIC-capables (Cloudflare/Google/Fastly)'],
   ]],
 ];
-function renderStealthToggles(features) {
-  const box=document.getElementById('featToggles');
-  if (!box || !features) return;
+const WORKER_FEATURE_KEYS = new Set(['dns_prefetch','thirdparty_burst','background_noise','nxdomain_probes','stream_noise','ech','quic_probe']);
+const DEFAULT_ON_KEYS = new Set(['tls_rotation','realistic_depth','referer_chains','asset_fetching','cookie_consent','auto_pause','diurnal']);
+
+function _statusText(st) {
+  return st==='running' ? 'live' : st==='error' ? 'error' : st==='pending' ? 'start…' : 'off';
+}
+
+function _buildFeatSkeleton(box) {
   let html='';
   for (const [groupName, items] of FEAT_GROUPS) {
     html += `<div class="feat-group-title">${groupName}</div>`;
     for (const [key, label, tip] of items) {
-      // tls_rotation/realistic_depth/etc default to true (undefined === on)
-      const defaultOn = ['tls_rotation','realistic_depth','referer_chains','asset_fetching','auto_pause','diurnal'].includes(key);
-      const on = features[key] === true || (features[key] === undefined && defaultOn);
-      html += `<div class="feat-row">
+      const hasStatus = WORKER_FEATURE_KEYS.has(key);
+      const statusHtml = hasStatus
+        ? `<span class="feat-status"></span><span class="feat-status-txt"></span>`
+        : '';
+      html += `<div class="feat-row" data-key="${key}">
         <div class="feat-info"><div class="feat-name">${label}</div><div class="feat-tip">${tip}</div></div>
-        <div class="toggle ${on?'on':''}" data-feat-key="${key}" data-feat-on="${on}"></div>
+        <div class="feat-controls">
+          ${statusHtml}
+          <div class="toggle" data-feat-key="${key}" data-feat-on="false"></div>
+        </div>
       </div>`;
     }
   }
   box.innerHTML=html;
-  // Attach click handlers
   box.querySelectorAll('.toggle').forEach(t=>{
     t.onclick = ()=>{
       const k=t.dataset.featKey;
@@ -185,7 +200,78 @@ function renderStealthToggles(features) {
       toggleFeat(k, !wasOn);
       t.classList.toggle('on');
       t.dataset.featOn = String(!wasOn);
+      if (WORKER_FEATURE_KEYS.has(k)) {
+        const row=t.closest('.feat-row');
+        const dot=row.querySelector('.feat-status');
+        const lab=row.querySelector('.feat-status-txt');
+        if (dot && lab) {
+          const next = !wasOn ? 'pending' : 'off';
+          dot.className=`feat-status ${next}`;
+          lab.className=`feat-status-txt ${next}`;
+          lab.textContent=_statusText(next);
+        }
+      }
     };
+  });
+  box.dataset.built='1';
+}
+
+function renderStealthToggles(features, status, efficacy) {
+  const box=document.getElementById('featToggles');
+  if (!box || !features) return;
+  if (!box.dataset.built) _buildFeatSkeleton(box);
+  // State-only update (no innerHTML rebuild)
+  box.querySelectorAll('.feat-row').forEach(row=>{
+    const key=row.dataset.key;
+    const on = features[key]===true || (features[key]===undefined && DEFAULT_ON_KEYS.has(key));
+    const toggle=row.querySelector('.toggle');
+    if (toggle) {
+      toggle.classList.toggle('on', on);
+      toggle.dataset.featOn=String(on);
+    }
+    // Efficacy badge (count + last activity) for any feature with data
+    const effInfo = efficacy && (efficacy[key] || (key === 'cookie_consent' && efficacy.cookie_consent_detected));
+    let effBadge = row.querySelector('.feat-eff');
+    const eff = efficacy && efficacy[key];
+    const effDetected = key === 'cookie_consent' ? efficacy && efficacy.cookie_consent_detected : null;
+    if (eff || effDetected) {
+      if (!effBadge) {
+        effBadge = document.createElement('div');
+        effBadge.className = 'feat-eff';
+        const tip = row.querySelector('.feat-tip');
+        if (tip) tip.parentNode.insertBefore(effBadge, tip.nextSibling);
+      }
+      let txt = '';
+      if (key === 'dns_prefetch' && eff && eff.hit_rate !== undefined) {
+        txt = `${eff.count} resolves · hit ${(eff.hit_rate*100).toFixed(0)}%`;
+      } else if (key === 'cookie_consent') {
+        const fired = (eff && eff.count) || 0;
+        const det = (effDetected && effDetected.count) || 0;
+        txt = `${det} CMP detectes · ${fired} consent fires`;
+      } else if (eff && eff.count !== undefined) {
+        const ageStr = eff.last_age_s != null ? `${Math.floor(eff.last_age_s)}s ago` : '';
+        txt = `${eff.count} events${ageStr ? ' · ' + ageStr : ''}`;
+      }
+      effBadge.textContent = txt;
+    } else if (effBadge) {
+      effBadge.remove();
+    }
+    if (WORKER_FEATURE_KEYS.has(key)) {
+      const info = (status && status[key]) || null;
+      const st = info ? info.state : (on ? 'pending' : 'off');
+      const running = info ? info.running : 0;
+      const tip = st === 'running'
+        ? `${running} worker${running>1?'s':''} running`
+        : st === 'error'
+          ? 'toggle ON but no worker alive (check logs)'
+          : st === 'pending'
+            ? 'starting…'
+            : 'inactive';
+      const dot=row.querySelector('.feat-status');
+      const lab=row.querySelector('.feat-status-txt');
+      if (dot) { dot.className=`feat-status ${st}`; dot.title=tip; }
+      if (lab) { lab.className=`feat-status-txt ${st}`; lab.textContent=_statusText(st); lab.title=tip; }
+    }
   });
 }
 
@@ -198,7 +284,14 @@ function renderDns(d) {
     const extra=document.getElementById('dnsExtra');
     if (extra) {
       if (d.dns_servers.length>1) {
-        extra.innerHTML=`<span style="cursor:pointer;text-decoration:underline" onclick="this.textContent='${d.dns_servers.join(' · ')}'">+ ${d.dns_servers.length-1} more</span>`;
+        extra.innerHTML='';
+        const span=document.createElement('span');
+        span.style.cursor='pointer';
+        span.style.textDecoration='underline';
+        span.textContent=`+ ${d.dns_servers.length-1} more`;
+        const full=d.dns_servers.join(' · ');
+        span.onclick=()=>{ span.textContent=full; };
+        extra.appendChild(span);
       } else {
         extra.textContent='system';
       }
@@ -218,7 +311,7 @@ function renderDomains(d) {
   if (td && d.top_domains && d.top_domains.length) {
     td.innerHTML='<table><thead><tr><th>Domain</th><th>OK</th><th>Fail</th><th>Health</th><th>Data</th></tr></thead><tbody>'
       +d.top_domains.slice(0,15).map(dm=>`<tr>
-        <td style="color:var(--info)">${dm.domain}</td><td>${dm.ok}</td><td>${dm.fail}</td>
+        <td style="color:var(--info)">${esc(dm.domain)}</td><td>${dm.ok}</td><td>${dm.fail}</td>
         <td><span class="hbar"><span class="hfill" style="width:${dm.health*100}%;background:${healthColor(dm.health)}"></span></span>${(dm.health*100).toFixed(0)}%</td>
         <td>${fmtB(dm.bytes)}</td>
       </tr>`).join('')+'</tbody></table>';
@@ -227,7 +320,7 @@ function renderDomains(d) {
   if (tl && d.tld_distribution && d.tld_distribution.length) {
     const maxC=d.tld_distribution[0].count;
     tl.innerHTML=d.tld_distribution.map(t=>`<div class="tld-row">
-      <span class="tld-name">${t.tld}</span>
+      <span class="tld-name">${esc(t.tld)}</span>
       <div class="tld-bar"><div class="tld-fill" style="width:${(t.count/maxC)*100}%"></div></div>
       <span class="tld-count">${fmt(t.count)}</span>
     </div>`).join('');
@@ -239,7 +332,7 @@ function renderDomains(d) {
       education:'#7c4dff',finance:'#ffd740',entertainment:'#ff5252',travel:'#26c6da',
       health:'#66bb6a',sports:'#ff7043',government:'#78909c',other:'#546e7a'};
     cd.innerHTML=d.category_distribution.map(c=>`<div class="tld-row">
-      <span class="tld-name" style="color:${colors[c.category]||'var(--info)'};min-width:100px">${c.category}</span>
+      <span class="tld-name" style="color:${colors[c.category]||'var(--info)'};min-width:100px">${esc(c.category)}</span>
       <div class="tld-bar"><div class="tld-fill" style="width:${(c.count/maxCat)*100}%;background:${colors[c.category]||'var(--info)'}"></div></div>
       <span class="tld-count">${fmt(c.count)}</span>
     </div>`).join('');
@@ -256,8 +349,8 @@ function renderLogs(d) {
       return `<div class="log-entry">
         <span class="log-ts">${t.toLocaleTimeString()}</span>
         <span class="log-status ${sc}">${r.status||'ERR'}</span>
-        <span class="log-domain">${r.domain}</span>
-        <span class="log-url">${r.url}</span>
+        <span class="log-domain">${esc(r.domain)}</span>
+        <span class="log-url">${esc(r.url)}</span>
       </div>`;
     }).join('');
   }
@@ -268,8 +361,8 @@ function renderLogs(d) {
         const t=new Date(e.ts*1000);
         return `<div class="err-entry">
           <span class="log-ts">${t.toLocaleTimeString()}</span>
-          <span class="err-msg"> U${e.user_id} ${e.error}</span>
-          <div class="err-url">${e.url}</div>
+          <span class="err-msg"> U${e.user_id} ${esc(e.error)}</span>
+          <div class="err-url">${esc(e.url)}</div>
         </div>`;
       }).join('');
     } else {
@@ -285,7 +378,7 @@ function update(d) {
   renderDns(d);
   renderDomains(d);
   renderLogs(d);
-  if (d.features) renderStealthToggles(d.features);
+  if (d.features) renderStealthToggles(d.features, d.feature_status, d.efficacy || {});
   const lu=document.getElementById('lastUpdate');
   if (lu) lu.textContent=new Date(d.timestamp).toLocaleTimeString();
 }

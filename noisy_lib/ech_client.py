@@ -1,6 +1,6 @@
-# ech_client.py - Probe ECH (Encrypted Client Hello) via curl_cffi
-# IN: host:str, rng | OUT: bool | MODIFIE: rien
-# APPELE PAR: dns_stealth.py, dns_prefetch.py | APPELLE: curl_cffi, config
+# ech_client.py - Probe ECH (Encrypted Client Hello) via curl_cffi + worker periodique
+# IN: host:str, rng / domains, stop_event | OUT: bool / None | MODIFIE: rien
+# APPELE PAR: dashboard_collector (ech_worker), dns_stealth.py, dns_prefetch.py | APPELLE: curl_cffi, config
 
 import asyncio
 import logging
@@ -66,3 +66,23 @@ async def ech_probe(host: str, rng: random.Random) -> bool:
     except Exception as e:
         log.debug(f"[ECH] failed host={host}: {e}")
         return False
+
+
+async def ech_worker(domains, stop_event: asyncio.Event) -> None:
+    """Probe ECH periodiquement sur des hosts aleatoires (60-180s interval)."""
+    if not is_ech_available():
+        log.warning("[ECH] worker exit — curl_cffi non dispo")
+        return
+    log.info(f"[DEBUT] ech_worker | hosts={len(domains)}")
+    rng = random.Random()
+    while not stop_event.is_set():
+        try:
+            if domains:
+                host = rng.choice(domains)
+                await ech_probe(host, rng)
+            await asyncio.sleep(rng.uniform(60, 180))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.debug(f"[ECH] worker loop err: {e}")
+            await asyncio.sleep(30)
