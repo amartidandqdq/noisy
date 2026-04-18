@@ -186,28 +186,6 @@ Endpoints externes : `/metrics` (Prometheus), webhooks POST (pause/resume/alert)
 | `UserCrawler` | `crawler.py` | Crawl par utilisateur virtuel avec queue, semaphore, rate limiting |
 | `UserProfile` | `profiles.py` | Profil utilisateur : UA, geo, mobile, schedule, stealth headers, fingerprint rotation |
 
-## Headers obligatoires (tout fichier noisy_lib)
-```python
-# nom.py - But en 5 mots
-# IN: x | OUT: y | MODIFIE: z
-# APPELÉ PAR: a | APPELLE: b
-```
-
-## Pattern logging uniforme
-```python
-log = logging.getLogger(__name__)
-
-async def ma_fonction(x):
-    log.info(f"[DEBUT] ma_fonction | {x=}")
-    try:
-        result = ...
-        log.info(f"[FIN] ma_fonction | {result=}")
-        return result
-    except Exception as e:
-        log.error(f"[ERREUR] ma_fonction | {e}")
-        raise
-```
-
 ## Pièges connus (PROTECTED)
 - **ALPN h2 + aiohttp = crash** : `get_rotated_ssl_context()` est appelé par `profiles.py` (→ aiohttp) ET par raw sockets. Ne JAMAIS mettre h2 en default. Utiliser `include_h2=True` uniquement dans workers/dns_prefetch/dns_stealth/stream_noise.
 - **`_save_settings({"features": data})` partiel** : `data` ne contient que la clé du dernier clic. Toujours sauvegarder via `_get_all_features_state()` pour l'état complet.
@@ -284,19 +262,6 @@ Historique complet (P0→P4, 8+6+3+11 bugfixes, 9+5+4+5 features, ALPN/settings 
 
 | Décision | Choix | Raison |
 |----------|-------|--------|
-| Rate limiting | 1 `DomainRateLimiter` partagé entre tous crawlers | Évite que 5 users frappent le même domaine simultanément |
-| Retry HTTP | Uniquement 5xx + exceptions réseau, pas 4xx | 4xx = erreur client intentionnelle, pas transitoire |
-| Blacklist URL | Double filtre : avant fetch + après extraction | Économise requêtes ET évite d'enqueue des URLs inutiles |
-| Domain locks | Bounded dict 50K + FIFO eviction | Évite memory leak sur longues sessions |
-| Config file | `--config` explicite, pas d'auto-load | Comportement prévisible |
-| Dashboard stack | FastAPI + WebSocket + vanilla HTML/CSS/JS multi-files | Pas de build step, séparation logique sans dépendances |
-| Metrics catégorisation | 4xx/5xx/network séparés | Évite inflation artificielle du fail% (4xx ≠ panne) |
-| HTTP noise | HEAD only (pas POST) | Lecture seule, aucun effet secondaire sur les serveurs cibles |
-| Dashboard bind | 127.0.0.1 par défaut | Pas d'auth, donc pas d'exposition réseau |
-| Domain health threshold | 20% min, 10 samples min | Évite skip prématuré + permet recovery |
-| Blocklist 2 niveaux | domain_blocklist (set) + url_blacklist (list) | O(1) pour ~1.08M domaines OISD+Hagezi, substring pour patterns courts |
-| TLD generic passthrough | .com/.net/.org toujours inclus | Filtre TLD ne bloque pas les sites internationaux sur gTLD |
-| Settings persistence | JSON file, pas DB | Simple, portable, pas de dépendance |
 | ALPN h2 | `include_h2=True` raw sockets only, http/1.1 default | aiohttp crash sur HTTP/2 framing |
 | dnspython vs getaddrinfo | dnspython | getaddrinfo n'expose pas le TTL |
 | curl_cffi pour ECH | BoringSSL via curl_cffi | Python ssl stdlib n'a aucun support ECH |
