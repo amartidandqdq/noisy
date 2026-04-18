@@ -1,10 +1,32 @@
-#Folders
-examples
+# Folders
+venv
+.venv
+__pycache__
+.git
 .github
 .circleci
+.idea
+.vscode
+examples
+tests
+CC-Session-Logs
+cookies
 
-#Files
+# Files
 .gitignore
 .dockerignore
 README.md
 LICENSE
+CLAUDE.md
+CLAUDE-Archive.md
+.noisy_settings.json
+*.log
+*.pyc
+*.pyo
+.DS_Store
+Dockerfile
+docker-compose.yml
+start.bat
+start.sh
+start.command
+requirements-dev.txt
