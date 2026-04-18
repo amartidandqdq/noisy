@@ -18,7 +18,7 @@ Flags principaux : `--num_users N`, `--schedule 8-23`, `--geo europe_fr`, `--reg
 ## Tests
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/ -v              # 76 tests, < 1s
+python -m pytest tests/ -v              # 83 tests, < 1s
 ```
 
 ## Règles de modularité (PROTECTED)
@@ -63,6 +63,10 @@ noisy_lib/
   throttle.py             → Token bucket bandwidth throttling (61 lignes)
   ws_noise.py             → WebSocket/SSE idle connections bruit (113 lignes)
   traffic_mirror.py       → Miroir cache DNS + bruit proportionnel (161 lignes)
+  page_consent.py         → Detection CMP + simulation acceptation cookies (84 lignes)
+  quic_probe.py           → QUIC Initial UDP/443 vers CDN HTTP/3-capables (108 lignes)
+  blocklist_fuzzy.py      → Stem index pour catch variants hostname (84 lignes)
+  efficacy.py             → Compteurs d'efficacite par feature stealth (60 lignes)
   dashboard_collector.py  → MetricsCollector + settings persistence + stealth worker lifecycle (687 lignes)
   dashboard.py            → FastAPI routes + WebSocket + webhook + mount /css /js; lit index.html par requete (200 lignes)
   static/index.html       → Entry point + sidebar nav 5 onglets (Live/Users/Stealth/DNS/Domains)
@@ -71,7 +75,7 @@ noisy_lib/
   static/js/ui.js         → Render functions + esc() XSS helper + skeleton-once pour Stealth toggles
   static/dashboard.legacy.html → Ancien single-file (archive, non servi)
 start.bat                 → Windows one-click launcher
-start.command             → macOS one-click launcher (a creer si besoin)
+start.command             → macOS double-clickable launcher (delegate vers start.sh)
 start.sh                  → macOS/Linux one-click launcher (executable)
 ```
 

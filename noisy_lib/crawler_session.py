@@ -47,6 +47,8 @@ class CrawlerBase:
         self.max_links_per_page = max_links_per_page
         self.url_blacklist = url_blacklist
         self.domain_blocklist = domain_blocklist or set()
+        # Stem index for variant hostname catching (built lazily on first use, shared static)
+        self._stem_index = None
         self.cookie_persist = cookie_persist
         self.features = features or {}
         self.failed_counts: BoundedDict = BoundedDict(maxsize=10_000)
@@ -105,7 +107,19 @@ class CrawlerBase:
 
     def _domain_blocked(self, host: str) -> bool:
         parts = host.split(".")
-        return any(".".join(parts[i:]) in self.domain_blocklist for i in range(len(parts)))
+        if any(".".join(parts[i:]) in self.domain_blocklist for i in range(len(parts))):
+            return True
+        # Fuzzy stem match (lazy-built, shared per-class via cache)
+        if self._stem_index is None:
+            from .blocklist_fuzzy import build_stem_index_cached
+            self._stem_index = build_stem_index_cached(self.domain_blocklist)
+        if self._stem_index:
+            from .blocklist_fuzzy import host_matches_stem
+            if host_matches_stem(host, self._stem_index):
+                from . import efficacy
+                efficacy.bump("blocklist_fuzzy_hits")
+                return True
+        return False
 
     def _record_failure(self, url: str):
         count = (self.failed_counts.get(url, 0) or 0) + 1

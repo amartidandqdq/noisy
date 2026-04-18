@@ -149,6 +149,7 @@ const FEAT_GROUPS = [
     ['realistic_depth', 'Realistic Depth', '50-70% bounce / 20-30% short / 10-25% deep (re-rolled per session)'],
     ['referer_chains', 'Referer Chains', 'Search/direct/social/cross-site referers'],
     ['asset_fetching', 'Asset Fetching', 'Partial download of images/CSS/JS'],
+    ['cookie_consent', 'Cookie Consent', 'Detecte CMP (OneTrust/Cookiebot/Didomi…) et fire endpoints consent'],
     ['bandwidth_throttle', 'Bandwidth Throttle', 'Token bucket (fiber/4G/ADSL)'],
     ['auto_pause', 'Auto-Pause', 'Pause auto si fail% > 50%'],
     ['diurnal', 'Diurnal Curve', 'Modèle 24h (pic midi, creux nuit)'],
@@ -163,10 +164,11 @@ const FEAT_GROUPS = [
   ['Anti-DPI', [
     ['ech', 'ECH (Encrypted SNI)', 'curl_cffi BoringSSL — masque le SNI du FAI'],
     ['stream_noise', 'Stream Noise', 'Long CDN connections simulating video'],
+    ['quic_probe', 'QUIC / HTTP/3', 'UDP/443 probes vers CDN QUIC-capables (Cloudflare/Google/Fastly)'],
   ]],
 ];
-const WORKER_FEATURE_KEYS = new Set(['dns_prefetch','thirdparty_burst','background_noise','nxdomain_probes','stream_noise','ech']);
-const DEFAULT_ON_KEYS = new Set(['tls_rotation','realistic_depth','referer_chains','asset_fetching','auto_pause','diurnal']);
+const WORKER_FEATURE_KEYS = new Set(['dns_prefetch','thirdparty_burst','background_noise','nxdomain_probes','stream_noise','ech','quic_probe']);
+const DEFAULT_ON_KEYS = new Set(['tls_rotation','realistic_depth','referer_chains','asset_fetching','cookie_consent','auto_pause','diurnal']);
 
 function _statusText(st) {
   return st==='running' ? 'live' : st==='error' ? 'error' : st==='pending' ? 'start…' : 'off';
@@ -214,7 +216,7 @@ function _buildFeatSkeleton(box) {
   box.dataset.built='1';
 }
 
-function renderStealthToggles(features, status) {
+function renderStealthToggles(features, status, efficacy) {
   const box=document.getElementById('featToggles');
   if (!box || !features) return;
   if (!box.dataset.built) _buildFeatSkeleton(box);
@@ -227,12 +229,48 @@ function renderStealthToggles(features, status) {
       toggle.classList.toggle('on', on);
       toggle.dataset.featOn=String(on);
     }
+    // Efficacy badge (count + last activity) for any feature with data
+    const effInfo = efficacy && (efficacy[key] || (key === 'cookie_consent' && efficacy.cookie_consent_detected));
+    let effBadge = row.querySelector('.feat-eff');
+    const eff = efficacy && efficacy[key];
+    const effDetected = key === 'cookie_consent' ? efficacy && efficacy.cookie_consent_detected : null;
+    if (eff || effDetected) {
+      if (!effBadge) {
+        effBadge = document.createElement('div');
+        effBadge.className = 'feat-eff';
+        const tip = row.querySelector('.feat-tip');
+        if (tip) tip.parentNode.insertBefore(effBadge, tip.nextSibling);
+      }
+      let txt = '';
+      if (key === 'dns_prefetch' && eff && eff.hit_rate !== undefined) {
+        txt = `${eff.count} resolves · hit ${(eff.hit_rate*100).toFixed(0)}%`;
+      } else if (key === 'cookie_consent') {
+        const fired = (eff && eff.count) || 0;
+        const det = (effDetected && effDetected.count) || 0;
+        txt = `${det} CMP detectes · ${fired} consent fires`;
+      } else if (eff && eff.count !== undefined) {
+        const ageStr = eff.last_age_s != null ? `${Math.floor(eff.last_age_s)}s ago` : '';
+        txt = `${eff.count} events${ageStr ? ' · ' + ageStr : ''}`;
+      }
+      effBadge.textContent = txt;
+    } else if (effBadge) {
+      effBadge.remove();
+    }
     if (WORKER_FEATURE_KEYS.has(key)) {
-      const st = (status && status[key]) ? status[key].state : (on ? 'pending' : 'off');
+      const info = (status && status[key]) || null;
+      const st = info ? info.state : (on ? 'pending' : 'off');
+      const running = info ? info.running : 0;
+      const tip = st === 'running'
+        ? `${running} worker${running>1?'s':''} running`
+        : st === 'error'
+          ? 'toggle ON but no worker alive (check logs)'
+          : st === 'pending'
+            ? 'starting…'
+            : 'inactive';
       const dot=row.querySelector('.feat-status');
       const lab=row.querySelector('.feat-status-txt');
-      if (dot) dot.className=`feat-status ${st}`;
-      if (lab) { lab.className=`feat-status-txt ${st}`; lab.textContent=_statusText(st); }
+      if (dot) { dot.className=`feat-status ${st}`; dot.title=tip; }
+      if (lab) { lab.className=`feat-status-txt ${st}`; lab.textContent=_statusText(st); lab.title=tip; }
     }
   });
 }
@@ -340,7 +378,7 @@ function update(d) {
   renderDns(d);
   renderDomains(d);
   renderLogs(d);
-  if (d.features) renderStealthToggles(d.features, d.feature_status);
+  if (d.features) renderStealthToggles(d.features, d.feature_status, d.efficacy || {});
   const lu=document.getElementById('lastUpdate');
   if (lu) lu.textContent=new Date(d.timestamp).toLocaleTimeString();
 }

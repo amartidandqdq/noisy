@@ -33,7 +33,7 @@ SETTINGS_FILE = Path(__file__).parent.parent / ".noisy_settings.json"
 # Features that spawn background workers; managed by MetricsCollector lifecycle.
 STEALTH_WORKER_KEYS = (
     "dns_prefetch", "thirdparty_burst", "background_noise",
-    "nxdomain_probes", "stream_noise", "ech",
+    "nxdomain_probes", "stream_noise", "ech", "quic_probe",
 )
 
 
@@ -220,8 +220,11 @@ class MetricsCollector:
                 "nxdomain_probes": self.crawlers[0].features.get("nxdomain_probes", False) if self.crawlers else False,
                 "ech": self.crawlers[0].features.get("ech", False) if self.crawlers else False,
                 "stream_noise": self.crawlers[0].features.get("stream_noise", False) if self.crawlers else False,
+                "cookie_consent": self.crawlers[0].features.get("cookie_consent", True) if self.crawlers else True,
+                "quic_probe": self.crawlers[0].features.get("quic_probe", False) if self.crawlers else False,
             },
             "feature_status": self.stealth_worker_status(),
+            "efficacy": _efficacy_snapshot(),
         }
 
     def get_runtime_config(self) -> dict:
@@ -350,6 +353,10 @@ class MetricsCollector:
         elif key == "ech":
             from .ech_client import ech_worker
             tasks.append(asyncio.create_task(ech_worker(dns_hosts, stop)))
+        elif key == "quic_probe":
+            from .quic_probe import quic_worker
+            import random as _r
+            tasks.append(asyncio.create_task(quic_worker(stop, _r.Random(), dns_cache)))
         if tasks:
             self._stealth_workers[key] = tasks
             log.info(f"[FEATURES] {key}: {len(tasks)} worker(s) demarre(s)")

@@ -226,6 +226,8 @@ async def main_async(args):
         "nxdomain_probes": getattr(args, "nxdomain_probes", False),
         "ech": getattr(args, "ech", False),
         "stream_noise": getattr(args, "stream_noise", False),
+        "cookie_consent": True,
+        "quic_probe": getattr(args, "quic_probe", False),
     }
 
     # Shared DNS TTL cache

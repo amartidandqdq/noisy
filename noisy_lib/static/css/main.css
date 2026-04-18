@@ -316,3 +316,13 @@ select.cfg-input { appearance: none; cursor: pointer; }
   .grid { grid-template-columns: repeat(2, 1fr); }
   .feat-list { grid-template-columns: 1fr; }
 }
+
+/* efficacy badge under stealth feature row */
+.feat-eff {
+  font-size: 10px;
+  color: var(--accent);
+  margin-top: 2px;
+  font-family: var(--mono, monospace);
+  letter-spacing: 0.3px;
+  opacity: 0.85;
+}
