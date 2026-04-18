@@ -27,6 +27,11 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+from . import efficacy as _eff
+
+def _efficacy_snapshot():
+    return _eff.snapshot()
+
 STATIC_DIR = Path(__file__).parent / "static"
 SETTINGS_FILE = Path(__file__).parent.parent / ".noisy_settings.json"
 
