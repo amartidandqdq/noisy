@@ -30,6 +30,12 @@ log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 SETTINGS_FILE = Path(__file__).parent.parent / ".noisy_settings.json"
 
+# Features that spawn background workers; managed by MetricsCollector lifecycle.
+STEALTH_WORKER_KEYS = (
+    "dns_prefetch", "thirdparty_burst", "background_noise",
+    "nxdomain_probes", "stream_noise", "ech",
+)
+
 
 def _save_settings(data: dict):
     """Sauvegarde les settings dans .noisy_settings.json."""
@@ -110,6 +116,9 @@ class MetricsCollector:
         self._alert_fired = False
         self.auto_pause_enabled = True
         self._auto_paused = False
+        self._stealth_workers: dict = {k: [] for k in STEALTH_WORKER_KEYS}
+        self._stealth_ctx: dict = {}  # dns_hosts, dns_cache
+        self._drain_tasks: set = set()  # refs to cancellation-drain tasks (prevent GC)
 
     def collect(self) -> dict:
         now = time.monotonic()
@@ -212,6 +221,7 @@ class MetricsCollector:
                 "ech": self.crawlers[0].features.get("ech", False) if self.crawlers else False,
                 "stream_noise": self.crawlers[0].features.get("stream_noise", False) if self.crawlers else False,
             },
+            "feature_status": self.stealth_worker_status(),
         }
 
     def get_runtime_config(self) -> dict:
@@ -301,6 +311,89 @@ class MetricsCollector:
         self._stop_event = stop_event
         self._filtered_sites = top_sites
         self._crawler_params = params
+
+    def setup_stealth_context(self, dns_hosts, dns_cache):
+        """Context requis pour spawn/cancel des workers stealth via toggles."""
+        self._stealth_ctx = {"dns_hosts": dns_hosts, "dns_cache": dns_cache}
+
+    def _start_stealth_worker(self, key: str):
+        """Spawn le(s) worker(s) pour une feature stealth. Idempotent."""
+        if not self._stealth_ctx:
+            log.warning(f"[FEATURES] {key}: context non init, skip spawn")
+            return
+        # Already running?
+        live = [t for t in self._stealth_workers.get(key, []) if not t.done()]
+        if live:
+            return
+        stop = self._stop_event
+        dns_hosts = self._stealth_ctx["dns_hosts"]
+        dns_cache = self._stealth_ctx["dns_cache"]
+        bl = self._crawler_params.get("domain_blocklist", set()) if self._crawler_params else set()
+        tasks = []
+        if key == "dns_prefetch":
+            from .dns_prefetch import dns_prefetch_worker
+            tasks.append(asyncio.create_task(
+                dns_prefetch_worker(dns_hosts, stop, dns_cache, domain_blocklist=bl, worker_id=0)))
+        elif key == "thirdparty_burst":
+            from .dns_stealth import thirdparty_burst_worker, microburst_worker
+            tasks.append(asyncio.create_task(thirdparty_burst_worker(dns_hosts, stop, dns_cache)))
+            tasks.append(asyncio.create_task(microburst_worker(dns_hosts, stop, dns_cache)))
+        elif key == "background_noise":
+            from .dns_stealth import background_noise_worker
+            tasks.append(asyncio.create_task(background_noise_worker(stop, dns_cache)))
+        elif key == "nxdomain_probes":
+            from .dns_stealth import nxdomain_probe_worker
+            tasks.append(asyncio.create_task(nxdomain_probe_worker(stop, dns_cache)))
+        elif key == "stream_noise":
+            from .stream_noise import stream_noise_worker
+            tasks.append(asyncio.create_task(stream_noise_worker(stop, dns_cache)))
+        elif key == "ech":
+            from .ech_client import ech_worker
+            tasks.append(asyncio.create_task(ech_worker(dns_hosts, stop)))
+        if tasks:
+            self._stealth_workers[key] = tasks
+            log.info(f"[FEATURES] {key}: {len(tasks)} worker(s) demarre(s)")
+
+    def _stop_stealth_worker(self, key: str):
+        """Cancel tous les workers d'une feature + drain en arriere-plan."""
+        tasks = self._stealth_workers.get(key, [])
+        alive = [t for t in tasks if not t.done()]
+        for t in alive:
+            t.cancel()
+        self._stealth_workers[key] = []
+        if alive:
+            drain = asyncio.create_task(self._drain_cancelled(alive, key))
+            self._drain_tasks.add(drain)
+            drain.add_done_callback(self._drain_tasks.discard)
+            log.info(f"[FEATURES] {key}: {len(alive)} worker(s) arrete(s)")
+
+    async def _drain_cancelled(self, tasks, key: str):
+        """Attend la terminaison propre de tasks cancelled (evite RuntimeWarning)."""
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def stealth_worker_status(self) -> dict:
+        """Pour chaque feature worker: running (int), expected (on/off)."""
+        status = {}
+        features = self.crawlers[0].features if self.crawlers else {}
+        for key in STEALTH_WORKER_KEYS:
+            tasks = self._stealth_workers.get(key, [])
+            running = sum(1 for t in tasks if not t.done())
+            enabled = bool(features.get(key, False))
+            if enabled and running > 0:
+                state = "running"
+            elif enabled and running == 0:
+                state = "error"  # toggle ON mais worker mort
+            else:
+                state = "off"
+            status[key] = {"state": state, "running": running}
+        return status
+
+    def sync_stealth_workers(self):
+        """Au demarrage: spawn les workers pour toutes les features deja ON."""
+        features = self.crawlers[0].features if self.crawlers else {}
+        for key in STEALTH_WORKER_KEYS:
+            if features.get(key, False):
+                self._start_stealth_worker(key)
 
     def add_user(self) -> dict:
         """Cree un nouveau crawler virtuel et le lance."""
@@ -512,6 +605,12 @@ class MetricsCollector:
                 val = bool(data[key])
                 for c in self.crawlers:
                     c.features[key] = val
+                # Worker-backed features: spawn/cancel on toggle
+                if key in STEALTH_WORKER_KEYS:
+                    if val:
+                        self._start_stealth_worker(key)
+                    else:
+                        self._stop_stealth_worker(key)
                 changes.append(f"{key}={'on' if val else 'off'}")
 
         log.info(f"[FEATURES] {', '.join(changes)}")

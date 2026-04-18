@@ -18,7 +18,7 @@ from noisy_lib.config import (
 )
 from noisy_lib.config_loader import build_parser, load_config_file, validate_args
 from noisy_lib.crawler import UserCrawler
-from noisy_lib.fetchers import fetch_crux_top_sites, fetch_nsfw_blocklist, fetch_phishing_blocklist, fetch_user_agents, load_browser_history
+from noisy_lib.fetchers import fetch_crux_top_sites, fetch_gambling_blocklist, fetch_nsfw_blocklist, fetch_phishing_blocklist, fetch_piracy_blocklist, fetch_user_agents, load_browser_history
 from noisy_lib.metrics import SharedMetrics
 from noisy_lib.profiles import UAPool, UserProfile
 from noisy_lib.rate_limiter import DomainRateLimiter
@@ -82,17 +82,24 @@ async def _check_internet():
 async def _fetch_initial_data(args, ua_pool):
     """Charge CRUX, UAs, blocklists en parallèle. Retourne (top_sites, blocklist_set)."""
     async with aiohttp.ClientSession() as session:
-        top_sites, initial_uas, nsfw_domains, phishing_domains = await asyncio.gather(
+        top_sites, initial_uas, nsfw_domains, phishing_domains, gambling_domains, piracy_domains = await asyncio.gather(
             fetch_crux_top_sites(session, count=args.crux_count),
             fetch_user_agents(session),
             fetch_nsfw_blocklist(session),
             fetch_phishing_blocklist(session),
+            fetch_gambling_blocklist(session),
+            fetch_piracy_blocklist(session),
         )
         if initial_uas:
             await ua_pool.replace(initial_uas)
 
     blocklist_set = set()
-    for name, domains in [("NSFW", nsfw_domains), ("Phishing/malware", phishing_domains)]:
+    for name, domains in [
+        ("NSFW", nsfw_domains),
+        ("Phishing/malware", phishing_domains),
+        ("Gambling", gambling_domains),
+        ("Piracy", piracy_domains),
+    ]:
         if domains:
             blocklist_set.update(domains)
             log.info(f"[BLOCKLIST] {name}: {len(domains)} domaines")
@@ -246,23 +253,27 @@ async def main_async(args):
            for i in range(args.search_workers)]
         + [asyncio.create_task(ws_noise_worker(stop_event, worker_id=i))
            for i in range(getattr(args, "ws_workers", 0))]
-        + [asyncio.create_task(dns_prefetch_worker(dns_hosts, stop_event, dns_cache, domain_blocklist=blocklist_set, worker_id=i))
-           for i in range(getattr(args, "prefetch_workers", 0))]
     )
 
     if getattr(args, "mirror", False):
         tasks.append(asyncio.create_task(mirror_worker(stop_event, domain_blocklist=blocklist_set)))
 
-    if getattr(args, "thirdparty_burst", False):
-        tasks.append(asyncio.create_task(thirdparty_burst_worker(dns_hosts, stop_event, dns_cache)))
-        # Micro-burst activé automatiquement avec thirdparty-burst
-        tasks.append(asyncio.create_task(microburst_worker(dns_hosts, stop_event, dns_cache)))
-    if getattr(args, "background_noise", False):
-        tasks.append(asyncio.create_task(background_noise_worker(stop_event, dns_cache)))
-    if getattr(args, "nxdomain_probes", False):
-        tasks.append(asyncio.create_task(nxdomain_probe_worker(stop_event, dns_cache)))
-    if getattr(args, "stream_noise", False):
-        tasks.append(asyncio.create_task(stream_noise_worker(stop_event, dns_cache)))
+    # Stealth workers (dns_prefetch/thirdparty_burst/background_noise/nxdomain_probes/
+    # stream_noise/ech) sont gerees dynamiquement par le collector dashboard.
+    # Sans dashboard: fallback au spawn direct via flags CLI.
+    if not args.dashboard:
+        if getattr(args, "prefetch_workers", 0) > 0:
+            for i in range(args.prefetch_workers):
+                tasks.append(asyncio.create_task(dns_prefetch_worker(dns_hosts, stop_event, dns_cache, domain_blocklist=blocklist_set, worker_id=i)))
+        if getattr(args, "thirdparty_burst", False):
+            tasks.append(asyncio.create_task(thirdparty_burst_worker(dns_hosts, stop_event, dns_cache)))
+            tasks.append(asyncio.create_task(microburst_worker(dns_hosts, stop_event, dns_cache)))
+        if getattr(args, "background_noise", False):
+            tasks.append(asyncio.create_task(background_noise_worker(stop_event, dns_cache)))
+        if getattr(args, "nxdomain_probes", False):
+            tasks.append(asyncio.create_task(nxdomain_probe_worker(stop_event, dns_cache)))
+        if getattr(args, "stream_noise", False):
+            tasks.append(asyncio.create_task(stream_noise_worker(stop_event, dns_cache)))
 
     if args.dashboard:
         from noisy_lib.dashboard import MetricsCollector, start_dashboard
@@ -284,7 +295,9 @@ async def main_async(args):
             "cookie_persist": getattr(args, "cookie_persist", False),
             "features": features,
         })
+        collector.setup_stealth_context(dns_hosts, dns_cache)
         collector.restore_saved_settings()
+        collector.sync_stealth_workers()
         tasks.append(asyncio.create_task(start_dashboard(collector, args.dashboard_port, args.dashboard_host)))
 
     if args.timeout:
@@ -297,7 +310,12 @@ async def main_async(args):
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
-    await asyncio.gather(*[asyncio.create_task(c.close()) for c in crawlers], return_exceptions=True)
+    close_results = await asyncio.gather(
+        *[asyncio.create_task(c.close()) for c in crawlers], return_exceptions=True
+    )
+    for c, r in zip(crawlers, close_results):
+        if isinstance(r, BaseException):
+            log.warning(f"[FIN] close failed u={c.profile.user_id}: {r!r}")
     log.info("[FIN] main_async | arrêt propre")
 
 
