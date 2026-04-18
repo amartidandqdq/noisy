@@ -154,6 +154,11 @@ config.py (feuille — 0 import noisy_lib)
 | ECH (Encrypted Client Hello) | `ech_client.py` |
 | Streaming CDN simulation | `stream_noise.py` |
 | Constantes DNS stealth / anti-DPI | `config.py` (THIRD_PARTY_DOMAINS, STREAMING_CDN_DOMAINS…) |
+| Detection CMP cookies | `page_consent.py` (CMP_MARKERS) |
+| QUIC/HTTP3 probe UDP | `quic_probe.py` (QUIC_CAPABLE_HOSTS, _build_quic_initial) |
+| Stem fuzzy blocklist | `blocklist_fuzzy.py` (MIN_STEM_LEN=8, MIN_VARIANTS=3) |
+| Compteurs efficacy par feature | `efficacy.py` (bump, snapshot) |
+| Container Docker | `Dockerfile`, `docker-compose.yml`, `.dockerignore` |
 
 ## Dashboard — fonctionnalités
 
@@ -218,6 +223,9 @@ async def ma_fonction(x):
 - **XSS dashboard** : `ui.js` a un helper `esc()` pour tous les data paths user-controlled (r.url/r.domain/dm.domain/e.url/e.error/u.ua/u.geo/t.tld/c.category). Tout nouveau render qui injecte des données du crawl doit passer par `esc()` ou utiliser `textContent`.
 - **UI skeleton-once** : `renderStealthToggles` build le DOM une seule fois via `box.dataset.built`, puis ne fait que des state updates (toggle.classList, feat-status className/textContent). Évite les rebuilds innerHTML qui détruisent handlers et focus.
 - **dashboard.py lit index.html à chaque requête** : pas de cache en mémoire. Changements HTML visibles après simple reload browser, pas de restart Python requis.
+- **`apply_features` whitelist** : la boucle propage les flags vers `crawler.features` UNIQUEMENT pour les keys listées. Tout nouveau toggle (`cookie_consent`, `quic_probe`, …) doit etre ajoute sinon le clic UI reste inerte (toggle visuel ON mais state pas applique).
+- **Sed-style edits sans assert** : modifs Python via `str.replace()` peuvent silencieusement no-op si le marqueur a derive d'un caractere. Toujours `assert old in src` avant `replace`. Bug vu cette session sur l'import `_efficacy_snapshot` perdu.
+- **Docker CVE drift** : `python:3.12-slim` (Bookworm) trainait openssl/tar/pip vulnerables. Bump a `python:3.13-slim-trixie` + `apt upgrade -y` + `pip>=25.3` dans builder. Re-scan apres chaque rebuild.
 
 ## Invariants clés (PROTECTED)
 - `DomainRateLimiter` est **partagé** entre tous les crawlers (cross-user rate limiting)
@@ -249,7 +257,10 @@ Détails complets archivés dans `CLAUDE-Archive.md`. Référence rapide :
 | **Bruit fond** | WebSocket idle (2-5 conn), traffic mirror (DNS cache obs), HTTP noise HEAD-only, search noise (Google/Bing/DDG suit 1-3 résultats) | `ws_noise.py`, `traffic_mirror.py`, `workers.py` |
 | **DNS stealth** | TTL cache (dnspython, respect TTL), DNS→TCP→TLS correlation, IP persistence, DNS prefetch (extraction page links), mode léger dns-optimized | `dns_resolver.py`, `dns_prefetch.py`, `workers.py` |
 | **DNS advanced** | 3rd-party burst (8-25 CDN/tracker/page = effet iceberg), background noise (NTP/Spotify/Steam), micro-burst (30-60 sim. + silence), NXDOMAIN probes (Chrome intranet + captive) | `dns_stealth.py` |
-| **Anti-DPI** | Range payload 4-12KB (vs HEAD 0-byte), ECH curl_cffi/BoringSSL, streaming noise (long CDN keep-alive chunks 128-512KB) | `dns_prefetch.py`, `ech_client.py`, `stream_noise.py` |
+| **Anti-DPI** | Range payload 4-12KB (vs HEAD 0-byte), ECH curl_cffi/BoringSSL, streaming noise (long CDN keep-alive chunks 128-512KB), QUIC Initial UDP/443 vers CDN HTTP/3 (Cloudflare/Google/Fastly/Akamai) | `dns_prefetch.py`, `ech_client.py`, `stream_noise.py`, `quic_probe.py` |
+| **CMP** | Detection 8 markers CMP (OneTrust/Cookiebot/Didomi/Sourcepoint/Quantcast/TrustArc/Iubenda/Termly), fire 1-2 endpoints consent par page avec jitter | `page_consent.py` |
+| **Defense** | Stem index fuzzy: catch variants type `grandpashabet7092.com` quand ≥3 siblings partagent stem ≥8 chars + meme TLD | `blocklist_fuzzy.py` |
+| **Observability** | Compteurs efficacy par feature (events count + hit-rate prefetch + last-activity), affiches en badge cyan sous chaque toggle Stealth | `efficacy.py` |
 | **Modèle activité** | Diurnal 24h (pic midi/creux nuit), scheduler (`--schedule 8-23` wrap), geo profiles (21 locales), mobile sim (10 UAs, Sec-CH-UA-Mobile), traffic replay JSON | `profiles.py`, `config.py` |
 | **Filtrage / sécurité** | OISD NSFW 524K + Phishing 335K + Hagezi Gambling 214K + Hagezi Piracy 12K = ~1.08M, TLD/Region filter (6 presets), URL blacklist substring, auto-pause fail%>50, connection health check | `fetchers.py`, `extractor.py`, `dashboard_collector.py` |
 | **UX dashboard** | Settings persistence (.noisy_settings.json), domain categories (11), live config edit, feature toggles + **status dots** (live/off/error), sidebar 5 tabs + raccourcis 1-5, `esc()` XSS helper | `dashboard_collector.py`, `static/` |
@@ -263,7 +274,8 @@ Historique complet (P0→P4, 8+6+3+11 bugfixes, 9+5+4+5 features, ALPN/settings 
 | Anti-DPI hardening (Range, ECH, stream, ALPN, IP persist) | ✅ | 2026-04 |
 | Code review + 11 fixes + Dashboard refonte + bug fixes UX | ✅ | 2026-04-16 AM |
 | Session XSS/Stealth-lifecycle : XSS esc(), ws re-raise, close() log, 6 worker toggles dynamiques + status dots, Logs→Live merge (6→5 tabs), Hagezi gambling/piracy (+227K), UI skeleton-once, cancellation drain | ✅ | 2026-04-16 PM |
-| Tests | 76 verts, < 1s | 2026-04-16 |
+| Cookie consent + QUIC/HTTP3 probe + efficacy badges + fuzzy stem blocklist + start.command + Docker (Trixie/CVE patches) + tooltip workers count | ✅ | 2026-04-18 |
+| Tests | 83 verts, < 1s | 2026-04-18 |
 
 - **Fork** : github.com/amartidandqdq/noisy (from madereddy/noisy)
 - **⚠ dashboard_collector.py** : 687 lignes (god-object assumé, seule exception au max 180)
