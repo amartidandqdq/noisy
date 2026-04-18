@@ -32,6 +32,8 @@ from . import efficacy as _eff
 def _efficacy_snapshot():
     return _eff.snapshot()
 
+from .profiles import is_mobile_ua as _is_mobile_ua
+
 STATIC_DIR = Path(__file__).parent / "static"
 SETTINGS_FILE = Path(__file__).parent.parent / ".noisy_settings.json"
 
@@ -155,7 +157,7 @@ class MetricsCollector:
                 "bytes": c.stats["bytes"],
                 "ua": c.profile.ua[:80],
                 "diurnal_weight": round(c.profile.diurnal_weight(), 2),
-                "is_mobile": getattr(c.profile, "is_mobile", False),
+                "is_mobile": _is_mobile_ua(c.profile.ua),
                 "geo": getattr(c.profile, "geo", None),
                 "active": getattr(c.profile, "is_active_hour", lambda: True)(),
             })
