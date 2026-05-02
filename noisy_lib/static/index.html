@@ -23,7 +23,6 @@
       <div class="sb-item" data-tab="stealth"><span>Stealth</span><span class="sb-key">3</span></div>
       <div class="sb-item" data-tab="dns"><span>DNS</span><span class="sb-key">4</span></div>
       <div class="sb-item" data-tab="domains"><span>Domains</span><span class="sb-key">5</span></div>
-      <div class="sb-item" data-tab="logs"><span>Logs</span><span class="sb-key">6</span></div>
     </nav>
     <div class="sb-foot">
       <div>uptime: <span id="uptime">00:00:00</span></div>
@@ -89,6 +88,23 @@
         <div class="section">
           <div class="sec-head"><span class="sec-title">Stealth Analysis</span><span class="sec-line"></span></div>
           <div class="sec-box" id="fpDetail"><div class="no-data">waiting...</div></div>
+        </div>
+      </div>
+
+      <div class="sections">
+        <div class="section">
+          <div class="sec-head">
+            <span class="sec-title">Live Request Log</span><span class="sec-line"></span>
+            <button class="btn" onclick="clearLog()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button>
+          </div>
+          <div class="sec-box tall" id="liveLog"><div class="no-data">waiting...</div></div>
+        </div>
+        <div class="section">
+          <div class="sec-head">
+            <span class="sec-title">Recent Errors</span><span class="sec-line"></span>
+            <button class="btn" onclick="clearErrors()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button>
+          </div>
+          <div class="sec-box tall" id="errList"><div class="no-data">no errors</div></div>
         </div>
       </div>
     </section>
@@ -211,26 +227,6 @@
         <div class="section full">
           <div class="sec-head"><span class="sec-title">Categories</span><span class="sec-line"></span></div>
           <div class="sec-box" id="catDist"><div class="no-data">waiting...</div></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- TAB: LOGS -->
-    <section class="tab" id="tab-logs">
-      <div class="sections">
-        <div class="section">
-          <div class="sec-head">
-            <span class="sec-title">Live Request Log</span><span class="sec-line"></span>
-            <button class="btn" onclick="clearLog()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button>
-          </div>
-          <div class="sec-box tall" id="liveLog"><div class="no-data">waiting...</div></div>
-        </div>
-        <div class="section">
-          <div class="sec-head">
-            <span class="sec-title">Recent Errors</span><span class="sec-line"></span>
-            <button class="btn" onclick="clearErrors()" style="font-size:8px;padding:2px 6px;margin-left:8px">clear</button>
-          </div>
-          <div class="sec-box tall" id="errList"><div class="no-data">no errors</div></div>
         </div>
       </div>
     </section>

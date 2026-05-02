@@ -19,6 +19,7 @@ from .config import (
 from .extractor import extract_links
 from .profiles import _diurnal_weight
 from .tls_profiles import get_rotated_ssl_context
+from . import efficacy
 
 log = logging.getLogger(__name__)
 
@@ -137,6 +138,7 @@ async def dns_prefetch_worker(
 
         # 1. DNS resolve la page source
         ip = await dns_cache.resolve(host)
+        efficacy.bump("dns_prefetch_resolves")
         if ip is None:
             await asyncio.sleep(rng.uniform(5, 15))
             continue

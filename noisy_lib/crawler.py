@@ -13,6 +13,7 @@ import aiohttp
 
 from .asset_fetcher import fetch_assets
 from .crawler_session import CrawlerBase
+from .page_consent import simulate_consent
 from .depth_model import pick_session_depth
 from .extractor import extract_assets, extract_links
 from .fetch_client import fetch_with_retry
@@ -79,6 +80,12 @@ class UserCrawler(CrawlerBase):
                             self.profile.get_headers(url), ssl_context=ssl_ctx,
                         )
                         self.stats["bytes"] += asset_bytes
+                if self.features.get("cookie_consent", True) and not dns_opt and html:
+                    consent_bytes = await simulate_consent(
+                        session, html, url, self.profile.get_headers(url),
+                        self.rng, ssl_context=ssl_ctx,
+                    )
+                    self.stats["bytes"] += consent_bytes
                 del html
                 if links:
                     links = self.rng.sample(links, min(len(links), self.max_links_per_page))

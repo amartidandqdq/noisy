@@ -29,15 +29,13 @@ log = logging.getLogger(__name__)
 def create_app(collector: MetricsCollector) -> FastAPI:
     app = FastAPI(title="Noisy Dashboard", docs_url=None, redoc_url=None)
 
-    _index_html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     app.mount("/css", StaticFiles(directory=str(STATIC_DIR / "css")), name="css")
     app.mount("/js", StaticFiles(directory=str(STATIC_DIR / "js")), name="js")
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
-        # no-cache: HTML refs versioned/timestamped CSS/JS via StaticFiles ETag.
-        # Forces browser to refetch HTML on each visit, picking up any layout changes.
-        return HTMLResponse(_index_html, headers={"Cache-Control": "no-cache, must-revalidate"})
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache, must-revalidate"})
 
     @app.get("/api/metrics")
     async def metrics():

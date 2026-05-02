@@ -6,12 +6,11 @@ let currentTab = 'live';
 
 // ---- Tab routing ----
 const TAB_HINTS = {
-  live: 'aggregate metrics',
+  live: 'aggregate metrics + request log + errors',
   users: 'virtual users + quick settings + config',
   stealth: 'feature toggles',
   dns: 'resolver + blocklist',
   domains: 'top domains, TLDs, categories',
-  logs: 'request log + errors',
 };
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
@@ -33,7 +32,7 @@ document.getElementById('sbNav').addEventListener('click', e=>{
 });
 
 // ---- Keyboard shortcuts ----
-const KEY_TO_TAB = ['live','users','stealth','dns','domains','logs'];
+const KEY_TO_TAB = ['live','users','stealth','dns','domains'];
 document.addEventListener('keydown', e=>{
   if (e.target.tagName==='INPUT' || e.target.tagName==='SELECT' || e.target.tagName==='TEXTAREA') return;
   if (e.metaKey||e.ctrlKey||e.altKey) return;

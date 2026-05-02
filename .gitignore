@@ -21,3 +21,6 @@ Thumbs.db
 .noisy_settings.json
 cookies/
 noisy_lib/static/dashboard.legacy.html
+
+#Session logs (personal, not project artifacts)
+CC-Session-Logs/

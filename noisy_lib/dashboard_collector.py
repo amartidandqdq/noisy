@@ -27,8 +27,21 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+from . import efficacy as _eff
+
+def _efficacy_snapshot():
+    return _eff.snapshot()
+
+from .profiles import is_mobile_ua as _is_mobile_ua
+
 STATIC_DIR = Path(__file__).parent / "static"
 SETTINGS_FILE = Path(__file__).parent.parent / ".noisy_settings.json"
+
+# Features that spawn background workers; managed by MetricsCollector lifecycle.
+STEALTH_WORKER_KEYS = (
+    "dns_prefetch", "thirdparty_burst", "background_noise",
+    "nxdomain_probes", "stream_noise", "ech", "quic_probe",
+)
 
 
 def _save_settings(data: dict):
@@ -110,6 +123,9 @@ class MetricsCollector:
         self._alert_fired = False
         self.auto_pause_enabled = True
         self._auto_paused = False
+        self._stealth_workers: dict = {k: [] for k in STEALTH_WORKER_KEYS}
+        self._stealth_ctx: dict = {}  # dns_hosts, dns_cache
+        self._drain_tasks: set = set()  # refs to cancellation-drain tasks (prevent GC)
 
     def collect(self) -> dict:
         now = time.monotonic()
@@ -141,7 +157,7 @@ class MetricsCollector:
                 "bytes": c.stats["bytes"],
                 "ua": c.profile.ua[:80],
                 "diurnal_weight": round(c.profile.diurnal_weight(), 2),
-                "is_mobile": getattr(c.profile, "is_mobile", False),
+                "is_mobile": _is_mobile_ua(c.profile.ua),
                 "geo": getattr(c.profile, "geo", None),
                 "active": getattr(c.profile, "is_active_hour", lambda: True)(),
             })
@@ -211,7 +227,11 @@ class MetricsCollector:
                 "nxdomain_probes": self.crawlers[0].features.get("nxdomain_probes", False) if self.crawlers else False,
                 "ech": self.crawlers[0].features.get("ech", False) if self.crawlers else False,
                 "stream_noise": self.crawlers[0].features.get("stream_noise", False) if self.crawlers else False,
+                "cookie_consent": self.crawlers[0].features.get("cookie_consent", True) if self.crawlers else True,
+                "quic_probe": self.crawlers[0].features.get("quic_probe", False) if self.crawlers else False,
             },
+            "feature_status": self.stealth_worker_status(),
+            "efficacy": _efficacy_snapshot(),
         }
 
     def get_runtime_config(self) -> dict:
@@ -301,6 +321,93 @@ class MetricsCollector:
         self._stop_event = stop_event
         self._filtered_sites = top_sites
         self._crawler_params = params
+
+    def setup_stealth_context(self, dns_hosts, dns_cache):
+        """Context requis pour spawn/cancel des workers stealth via toggles."""
+        self._stealth_ctx = {"dns_hosts": dns_hosts, "dns_cache": dns_cache}
+
+    def _start_stealth_worker(self, key: str):
+        """Spawn le(s) worker(s) pour une feature stealth. Idempotent."""
+        if not self._stealth_ctx:
+            log.warning(f"[FEATURES] {key}: context non init, skip spawn")
+            return
+        # Already running?
+        live = [t for t in self._stealth_workers.get(key, []) if not t.done()]
+        if live:
+            return
+        stop = self._stop_event
+        dns_hosts = self._stealth_ctx["dns_hosts"]
+        dns_cache = self._stealth_ctx["dns_cache"]
+        bl = self._crawler_params.get("domain_blocklist", set()) if self._crawler_params else set()
+        tasks = []
+        if key == "dns_prefetch":
+            from .dns_prefetch import dns_prefetch_worker
+            tasks.append(asyncio.create_task(
+                dns_prefetch_worker(dns_hosts, stop, dns_cache, domain_blocklist=bl, worker_id=0)))
+        elif key == "thirdparty_burst":
+            from .dns_stealth import thirdparty_burst_worker, microburst_worker
+            tasks.append(asyncio.create_task(thirdparty_burst_worker(dns_hosts, stop, dns_cache)))
+            tasks.append(asyncio.create_task(microburst_worker(dns_hosts, stop, dns_cache)))
+        elif key == "background_noise":
+            from .dns_stealth import background_noise_worker
+            tasks.append(asyncio.create_task(background_noise_worker(stop, dns_cache)))
+        elif key == "nxdomain_probes":
+            from .dns_stealth import nxdomain_probe_worker
+            tasks.append(asyncio.create_task(nxdomain_probe_worker(stop, dns_cache)))
+        elif key == "stream_noise":
+            from .stream_noise import stream_noise_worker
+            tasks.append(asyncio.create_task(stream_noise_worker(stop, dns_cache)))
+        elif key == "ech":
+            from .ech_client import ech_worker
+            tasks.append(asyncio.create_task(ech_worker(dns_hosts, stop)))
+        elif key == "quic_probe":
+            from .quic_probe import quic_worker
+            import random as _r
+            tasks.append(asyncio.create_task(quic_worker(stop, _r.Random(), dns_cache)))
+        if tasks:
+            self._stealth_workers[key] = tasks
+            log.info(f"[FEATURES] {key}: {len(tasks)} worker(s) demarre(s)")
+
+    def _stop_stealth_worker(self, key: str):
+        """Cancel tous les workers d'une feature + drain en arriere-plan."""
+        tasks = self._stealth_workers.get(key, [])
+        alive = [t for t in tasks if not t.done()]
+        for t in alive:
+            t.cancel()
+        self._stealth_workers[key] = []
+        if alive:
+            drain = asyncio.create_task(self._drain_cancelled(alive, key))
+            self._drain_tasks.add(drain)
+            drain.add_done_callback(self._drain_tasks.discard)
+            log.info(f"[FEATURES] {key}: {len(alive)} worker(s) arrete(s)")
+
+    async def _drain_cancelled(self, tasks, key: str):
+        """Attend la terminaison propre de tasks cancelled (evite RuntimeWarning)."""
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def stealth_worker_status(self) -> dict:
+        """Pour chaque feature worker: running (int), expected (on/off)."""
+        status = {}
+        features = self.crawlers[0].features if self.crawlers else {}
+        for key in STEALTH_WORKER_KEYS:
+            tasks = self._stealth_workers.get(key, [])
+            running = sum(1 for t in tasks if not t.done())
+            enabled = bool(features.get(key, False))
+            if enabled and running > 0:
+                state = "running"
+            elif enabled and running == 0:
+                state = "error"  # toggle ON mais worker mort
+            else:
+                state = "off"
+            status[key] = {"state": state, "running": running}
+        return status
+
+    def sync_stealth_workers(self):
+        """Au demarrage: spawn les workers pour toutes les features deja ON."""
+        features = self.crawlers[0].features if self.crawlers else {}
+        for key in STEALTH_WORKER_KEYS:
+            if features.get(key, False):
+                self._start_stealth_worker(key)
 
     def add_user(self) -> dict:
         """Cree un nouveau crawler virtuel et le lance."""
@@ -507,11 +614,17 @@ class MetricsCollector:
                     "asset_fetching", "bandwidth_throttle",
                     "dns_optimized", "dns_prefetch",
                     "thirdparty_burst", "background_noise", "nxdomain_probes",
-                    "ech", "stream_noise"):
+                    "ech", "stream_noise", "cookie_consent", "quic_probe"):
             if key in data:
                 val = bool(data[key])
                 for c in self.crawlers:
                     c.features[key] = val
+                # Worker-backed features: spawn/cancel on toggle
+                if key in STEALTH_WORKER_KEYS:
+                    if val:
+                        self._start_stealth_worker(key)
+                    else:
+                        self._stop_stealth_worker(key)
                 changes.append(f"{key}={'on' if val else 'off'}")
 
         log.info(f"[FEATURES] {', '.join(changes)}")
@@ -585,4 +698,18 @@ class MetricsCollector:
             uid = c.profile.user_id
             lines.append(f'noisy_user_visited{{user="{uid}"}} {c.stats["visited"]}')
             lines.append(f'noisy_user_failed{{user="{uid}"}} {c.stats["failed"]}')
+        # Efficacy counters per stealth feature (events depuis demarrage process)
+        eff = _efficacy_snapshot()
+        if eff:
+            lines.append(f"# HELP noisy_efficacy_events_total Stealth feature events")
+            lines.append(f"# TYPE noisy_efficacy_events_total counter")
+            for feat, rec in eff.items():
+                safe = feat.replace('"', '').replace('\\', '')
+                lines.append(f'noisy_efficacy_events_total{{feature="{safe}"}} {rec.get("count", 0)}')
+            # Hit-rate prefetch (gauge)
+            pf = eff.get("dns_prefetch", {})
+            if "hit_rate" in pf:
+                lines.append(f"# HELP noisy_dns_prefetch_hit_rate DNS prefetch hit rate (0-1)")
+                lines.append(f"# TYPE noisy_dns_prefetch_hit_rate gauge")
+                lines.append(f"noisy_dns_prefetch_hit_rate {pf['hit_rate']}")
         return "\n".join(lines) + "\n"

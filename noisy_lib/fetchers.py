@@ -14,7 +14,7 @@ from typing import List
 
 import aiohttp
 
-from .config import CRUX_TOP_CSV, DEFAULT_CRUX_COUNT, DEFAULT_UA_COUNT, MAX_RESPONSE_BYTES, OISD_BIG_URL, OISD_NSFW_URL, UA_FALLBACK, UA_PAGE_URL
+from .config import CRUX_TOP_CSV, DEFAULT_CRUX_COUNT, DEFAULT_UA_COUNT, HAGEZI_GAMBLING_URL, HAGEZI_PIRACY_URL, MAX_RESPONSE_BYTES, OISD_BIG_URL, OISD_NSFW_URL, UA_FALLBACK, UA_PAGE_URL
 from .profiles import SSL_CONTEXT
 
 log = logging.getLogger(__name__)
@@ -72,20 +72,40 @@ async def _fetch_oisd_list(session: aiohttp.ClientSession, url: str, name: str) 
         log.warning(f"[WARN] fetch_{name}_blocklist | {e}")
         return []
 
-    domains = [
-        line.strip() for line in text.splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
+    domains = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or s.startswith("//"):
+            continue
+        if s.startswith("*."):
+            s = s[2:]
+        domains.append(s)
     log.info(f"[FIN] fetch_{name}_blocklist | loaded={len(domains)} domaines")
     return domains
 
 
 async def fetch_nsfw_blocklist(session: aiohttp.ClientSession) -> List[str]:
+    if not OISD_NSFW_URL:
+        return []
     return await _fetch_oisd_list(session, OISD_NSFW_URL, "nsfw")
 
 
 async def fetch_phishing_blocklist(session: aiohttp.ClientSession) -> List[str]:
+    if not OISD_BIG_URL:
+        return []
     return await _fetch_oisd_list(session, OISD_BIG_URL, "phishing")
+
+
+async def fetch_gambling_blocklist(session: aiohttp.ClientSession) -> List[str]:
+    if not HAGEZI_GAMBLING_URL:
+        return []
+    return await _fetch_oisd_list(session, HAGEZI_GAMBLING_URL, "gambling")
+
+
+async def fetch_piracy_blocklist(session: aiohttp.ClientSession) -> List[str]:
+    if not HAGEZI_PIRACY_URL:
+        return []
+    return await _fetch_oisd_list(session, HAGEZI_PIRACY_URL, "piracy")
 
 
 def load_browser_history(path: str) -> List[str]:

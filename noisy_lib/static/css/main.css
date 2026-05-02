@@ -256,6 +256,20 @@ tr:hover td { background: var(--surface2); }
 }
 .feat-group-title:first-child { border-top: none; padding-top: 0; }
 
+/* Status dot per feature (green=running, red=error, gray=off) */
+.feat-controls { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.feat-status {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-dim); flex-shrink: 0;
+  transition: background .2s, box-shadow .2s;
+}
+.feat-status.running { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.feat-status.error { background: var(--fail); box-shadow: 0 0 6px var(--fail); }
+.feat-status.pending { background: var(--warn); }
+.feat-status-txt { font-size: 9px; color: var(--text-dim); min-width: 50px; text-align: right; }
+.feat-status-txt.running { color: var(--accent); }
+.feat-status-txt.error { color: var(--fail); }
+
 /* TLD FILTER */
 .tld-filter-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px; }
 .region-cb { display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer; }
@@ -301,4 +315,14 @@ select.cfg-input { appearance: none; cursor: pointer; }
   .sections { grid-template-columns: 1fr; }
   .grid { grid-template-columns: repeat(2, 1fr); }
   .feat-list { grid-template-columns: 1fr; }
+}
+
+/* efficacy badge under stealth feature row */
+.feat-eff {
+  font-size: 10px;
+  color: var(--accent);
+  margin-top: 2px;
+  font-family: var(--mono, monospace);
+  letter-spacing: 0.3px;
+  opacity: 0.85;
 }

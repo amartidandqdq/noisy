@@ -77,7 +77,7 @@ async def _ws_connect_one(
                         except Exception:
                             break
         except asyncio.CancelledError:
-            break
+            raise
         except Exception as e:
             log.debug(f"[WS] error {url.split('/')[2]}: {e}")
         # Exponential backoff on reconnect
