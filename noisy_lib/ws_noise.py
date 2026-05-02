@@ -5,13 +5,12 @@
 import asyncio
 import logging
 import random
-import time
 from typing import List
 
 import aiohttp
 
 from .config import UA_FALLBACK
-from .profiles import _diurnal_weight
+from .profiles import diurnal_scale
 
 log = logging.getLogger(__name__)
 
@@ -82,10 +81,7 @@ async def _ws_connect_one(
             log.debug(f"[WS] error {url.split('/')[2]}: {e}")
         # Exponential backoff on reconnect
         backoff = min(backoff + 1, 5)
-        wait = WS_RECONNECT_BASE * (2 ** backoff) * rng.uniform(0.5, 1.5)
-        lt = time.localtime()
-        hour = lt.tm_hour + lt.tm_min / 60
-        wait /= max(0.1, _diurnal_weight(hour))
+        wait = WS_RECONNECT_BASE * (2 ** backoff) * rng.uniform(0.5, 1.5) * diurnal_scale()
         await asyncio.sleep(min(wait, 600))
 
 

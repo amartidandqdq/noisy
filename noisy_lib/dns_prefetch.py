@@ -6,7 +6,6 @@ import asyncio
 import logging
 import random
 import re
-import time
 from typing import List, Optional, Set
 from urllib.parse import urlsplit
 
@@ -14,54 +13,15 @@ from . import host_in_blocklist
 from .config import (
     PREFETCH_MAX_BODY, PREFETCH_MAX_DOMAINS,
     PREFETCH_MIN_SLEEP, PREFETCH_MAX_SLEEP,
-    PROBE_RANGE_MAX, PROBE_RANGE_MIN, UA_FALLBACK,
+    UA_FALLBACK,
 )
 from .extractor import extract_links
-from .profiles import _diurnal_weight
+from .profiles import diurnal_sleep
+from .tcp_tls_probe import tcp_tls_probe
 from .tls_profiles import get_rotated_ssl_context
 from . import efficacy
 
 log = logging.getLogger(__name__)
-
-
-async def _tcp_tls_probe(ip: str, host: str, rng: random.Random, timeout: float = 10) -> bool:
-    """TCP+TLS+GET avec Range payload (4-12KB) — anti-DPI. Retourne True si OK."""
-    writer = None
-    try:
-        ssl_ctx = get_rotated_ssl_context(rng, include_h2=True)
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(ip, 443, ssl=ssl_ctx, server_hostname=host),
-            timeout=timeout,
-        )
-        ua = rng.choice(UA_FALLBACK)
-        range_end = rng.randint(PROBE_RANGE_MIN, PROBE_RANGE_MAX)
-        req = (
-            f"GET / HTTP/1.1\r\n"
-            f"Host: {host}\r\n"
-            f"User-Agent: {ua}\r\n"
-            f"Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
-            f"Accept-Language: en-US,en;q=0.9\r\n"
-            f"Range: bytes=0-{range_end}\r\n"
-            f"Connection: close\r\n\r\n"
-        )
-        writer.write(req.encode())
-        await writer.drain()
-        # Lire reponse reelle (headers + body Range) — DPI voit du payload
-        await asyncio.wait_for(reader.read(range_end + 2048), timeout=timeout)
-        return True
-    except Exception:
-        return False
-    finally:
-        if writer is not None:
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
-
-
-# Backward compat alias
-_tcp_tls_head = _tcp_tls_probe
 
 
 async def _fetch_page_lightweight(ip: str, host: str, rng: random.Random) -> Optional[str]:
@@ -177,14 +137,11 @@ async def dns_prefetch_worker(
                 continue
             d_ip = await dns_cache.resolve(d)
             if d_ip:
-                await _tcp_tls_probe(d_ip, d, rng)
+                await tcp_tls_probe(d_ip, d, rng)
             # Delai inter-prefetch (0.05-0.3s — navigateurs sont rapides)
             await asyncio.sleep(rng.uniform(0.05, 0.3))
 
         # Sleep avant prochain burst
-        lt = time.localtime()
-        hour = lt.tm_hour + lt.tm_min / 60
-        scale = 1.0 / max(0.1, _diurnal_weight(hour))
-        await asyncio.sleep(rng.uniform(min_sleep, max_sleep) * scale)
+        await diurnal_sleep(rng, min_sleep, max_sleep)
 
     log.info(f"[FIN] dns_prefetch_worker | id={worker_id}")

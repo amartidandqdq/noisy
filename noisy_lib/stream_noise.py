@@ -12,7 +12,7 @@ from .config import (
     STREAM_PAUSE, STREAM_SESSION_DURATION,
     STREAMING_CDN_DOMAINS, UA_FALLBACK,
 )
-from .profiles import _diurnal_weight
+from .profiles import diurnal_sleep
 from .throttle import BandwidthThrottle, assign_throttle
 from .tls_profiles import get_rotated_ssl_context
 
@@ -99,9 +99,6 @@ async def stream_noise_worker(
         log.debug(f"[STREAM] host={host} duration={duration:.0f}s bytes={total}")
 
         # Pause entre sessions (simule pause entre videos)
-        lt = time.localtime()
-        hour = lt.tm_hour + lt.tm_min / 60
-        scale = 1.0 / max(0.1, _diurnal_weight(hour))
-        await asyncio.sleep(rng.uniform(*STREAM_PAUSE) * scale)
+        await diurnal_sleep(rng, *STREAM_PAUSE)
 
     log.info(f"[FIN] stream_noise | id={worker_id}")

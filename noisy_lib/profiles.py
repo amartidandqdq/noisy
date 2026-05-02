@@ -88,6 +88,27 @@ def _activity_pause_seconds(rng: random.Random) -> float:
     return rng.uniform(300, 1800) if rng.random() < 0.05 else 0.0
 
 
+def diurnal_scale(hour: Optional[float] = None) -> float:
+    """Facteur multiplicatif pour sleep workers : 1.0 en journee, ~10x la nuit.
+
+    None -> heure courante. Used pour rythmer les workers de bruit selon le
+    profil diurnal sans dupliquer le pattern partout.
+    """
+    if hour is None:
+        lt = time.localtime()
+        hour = lt.tm_hour + lt.tm_min / 60
+    return 1.0 / max(0.1, _diurnal_weight(hour))
+
+
+async def diurnal_sleep(rng: random.Random, lo: float, hi: float):
+    """asyncio.sleep(rng.uniform(lo, hi) * diurnal_scale()).
+
+    Helper pour les workers de bruit qui veulent espacer leurs activations
+    selon le profil diurnal. Centralise le pattern dupplique 11+ fois.
+    """
+    await asyncio.sleep(rng.uniform(lo, hi) * diurnal_scale())
+
+
 class UserProfile:
     """Empreinte de navigation par utilisateur virtuel."""
 

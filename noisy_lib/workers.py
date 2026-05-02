@@ -16,7 +16,7 @@ import aiohttp
 from . import host_in_blocklist
 from .config import DEFAULT_DNS_MAX_SLEEP, DEFAULT_DNS_MIN_SLEEP, SEARCH_ENGINES, SEARCH_WORDS, UA_FALLBACK
 from .fetchers import fetch_user_agents
-from .profiles import _diurnal_weight
+from .profiles import diurnal_sleep
 from .tls_profiles import DEFAULT_SSL_CONTEXT as SSL_CONTEXT, get_rotated_ssl_context
 
 if TYPE_CHECKING:
@@ -42,10 +42,7 @@ async def dns_noise_worker(
         host = rng.choice(domains)
         # Skip si TTL encore valide — pas de requete DNS = pas de bruit reseau
         if dns_cache and dns_cache.is_cached(host):
-            lt = time.localtime()
-            hour = lt.tm_hour + lt.tm_min / 60
-            scale = 1.0 / max(0.1, _diurnal_weight(hour))
-            await asyncio.sleep(rng.uniform(min_sleep / 3, max_sleep / 3) * scale)
+            await diurnal_sleep(rng, min_sleep / 3, max_sleep / 3)
             continue
         # DNS resolve (avec TTL cache si disponible)
         ip = None
@@ -59,10 +56,7 @@ async def dns_noise_worker(
             except Exception as e:
                 log.debug(f"[DNS] failed={host} {e}")
         if ip is None:
-            lt = time.localtime()
-            hour = lt.tm_hour + lt.tm_min / 60
-            scale = 1.0 / max(0.1, _diurnal_weight(hour))
-            await asyncio.sleep(rng.uniform(min_sleep, max_sleep) * scale)
+            await diurnal_sleep(rng, min_sleep, max_sleep)
             continue
         # TCP + TLS handshake + HEAD (correlation DNS→TCP→SNI)
         writer = None
@@ -86,10 +80,7 @@ async def dns_noise_worker(
                     await writer.wait_closed()
                 except Exception:
                     pass
-        lt = time.localtime()
-        hour = lt.tm_hour + lt.tm_min / 60
-        scale = 1.0 / max(0.1, _diurnal_weight(hour))
-        await asyncio.sleep(rng.uniform(min_sleep, max_sleep) * scale)
+        await diurnal_sleep(rng, min_sleep, max_sleep)
 
 
 async def stats_reporter(crawlers: List["UserCrawler"], stop_event: asyncio.Event) -> None:
@@ -185,10 +176,7 @@ async def search_noise_worker(
                     log.debug(f"[SEARCH] q='{query}' engine={engine.split('/')[2]} status={resp.status}")
             except Exception:
                 pass
-            lt = time.localtime()
-            hour = lt.tm_hour + lt.tm_min / 60
-            scale = 1.0 / max(0.1, _diurnal_weight(hour))
-            await asyncio.sleep(rng.uniform(min_sleep, max_sleep) * scale)
+            await diurnal_sleep(rng, min_sleep, max_sleep)
 
 
 async def http_noise_worker(
@@ -219,7 +207,4 @@ async def http_noise_worker(
                     log.debug(f"[HEAD] host={host} status={resp.status}")
             except Exception:
                 pass
-            lt = time.localtime()
-            hour = lt.tm_hour + lt.tm_min / 60
-            scale = 1.0 / max(0.1, _diurnal_weight(hour))
-            await asyncio.sleep(rng.uniform(min_sleep, max_sleep) * scale)
+            await diurnal_sleep(rng, min_sleep, max_sleep)
