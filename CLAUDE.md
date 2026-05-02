@@ -67,7 +67,7 @@ noisy_lib/
   quic_probe.py           → QUIC Initial UDP/443 vers CDN HTTP/3-capables (108 lignes)
   blocklist_fuzzy.py      → Stem index pour catch variants hostname (84 lignes)
   efficacy.py             → Compteurs d'efficacite par feature stealth (60 lignes)
-  dashboard_collector.py  → MetricsCollector + settings persistence + stealth worker lifecycle (687 lignes)
+  dashboard_collector.py  → MetricsCollector + settings persistence + stealth worker lifecycle + Prometheus efficacy export (715 lignes)
   dashboard.py            → FastAPI routes + WebSocket + webhook + mount /css /js; lit index.html par requete (200 lignes)
   static/index.html       → Entry point + sidebar nav 5 onglets (Live/Users/Stealth/DNS/Domains)
   static/css/main.css     → Theme cyberpunk + responsive + dense mode + sidebar layout + feat-status dots
@@ -156,7 +156,7 @@ config.py (feuille — 0 import noisy_lib)
 | Constantes DNS stealth / anti-DPI | `config.py` (THIRD_PARTY_DOMAINS, STREAMING_CDN_DOMAINS…) |
 | Detection CMP cookies | `page_consent.py` (CMP_MARKERS) |
 | QUIC/HTTP3 probe UDP | `quic_probe.py` (QUIC_CAPABLE_HOSTS, _build_quic_initial) |
-| Stem fuzzy blocklist | `blocklist_fuzzy.py` (MIN_STEM_LEN=8, MIN_VARIANTS=3) |
+| Stem fuzzy blocklist (numeric + label/TLD spray) | `blocklist_fuzzy.py` (MIN_STEM_LEN=8/MIN_VARIANTS=3 numeric ; MIN_LABEL_LEN=10/MIN_TLD_VARIANTS=3 spray) |
 | Compteurs efficacy par feature | `efficacy.py` (bump, snapshot) |
 | Container Docker | `Dockerfile`, `docker-compose.yml`, `.dockerignore` |
 
@@ -237,8 +237,8 @@ Détails complets archivés dans `CLAUDE-Archive.md`. Référence rapide :
 | **DNS advanced** | 3rd-party burst (8-25 CDN/tracker/page = effet iceberg), background noise (NTP/Spotify/Steam), micro-burst (30-60 sim. + silence), NXDOMAIN probes (Chrome intranet + captive) | `dns_stealth.py` |
 | **Anti-DPI** | Range payload 4-12KB (vs HEAD 0-byte), ECH curl_cffi/BoringSSL, streaming noise (long CDN keep-alive chunks 128-512KB), QUIC Initial UDP/443 vers CDN HTTP/3 (Cloudflare/Google/Fastly/Akamai) | `dns_prefetch.py`, `ech_client.py`, `stream_noise.py`, `quic_probe.py` |
 | **CMP** | Detection 8 markers CMP (OneTrust/Cookiebot/Didomi/Sourcepoint/Quantcast/TrustArc/Iubenda/Termly), fire 1-2 endpoints consent par page avec jitter | `page_consent.py` |
-| **Defense** | Stem index fuzzy: catch variants type `grandpashabet7092.com` quand ≥3 siblings partagent stem ≥8 chars + meme TLD | `blocklist_fuzzy.py` |
-| **Observability** | Compteurs efficacy par feature (events count + hit-rate prefetch + last-activity), affiches en badge cyan sous chaque toggle Stealth | `efficacy.py` |
+| **Defense** | Stem index (numeric variants `grandpashabet7092.com`) + label/TLD-spray index (variants type `themoviesflix.{com,net,cc,llc}` quand label ≥10 chars sur ≥3 TLDs distincts) | `blocklist_fuzzy.py` |
+| **Observability** | Compteurs efficacy par feature (events count + hit-rate prefetch + last-activity), badge cyan sous toggles + export Prometheus (`noisy_efficacy_events_total{feature="..."}` + `noisy_dns_prefetch_hit_rate`) | `efficacy.py`, `dashboard_collector.py` |
 | **Modèle activité** | Diurnal 24h (pic midi/creux nuit), scheduler (`--schedule 8-23` wrap), geo profiles (21 locales), mobile sim (10 UAs, Sec-CH-UA-Mobile), traffic replay JSON | `profiles.py`, `config.py` |
 | **Filtrage / sécurité** | OISD NSFW 524K + Phishing 335K + Hagezi Gambling 214K + Hagezi Piracy 12K = ~1.08M, TLD/Region filter (6 presets), URL blacklist substring, auto-pause fail%>50, connection health check | `fetchers.py`, `extractor.py`, `dashboard_collector.py` |
 | **UX dashboard** | Settings persistence (.noisy_settings.json), domain categories (11), live config edit, feature toggles + **status dots** (live/off/error), sidebar 5 tabs + raccourcis 1-5, `esc()` XSS helper | `dashboard_collector.py`, `static/` |
@@ -253,10 +253,11 @@ Historique complet (P0→P4, 8+6+3+11 bugfixes, 9+5+4+5 features, ALPN/settings 
 | Code review + 11 fixes + Dashboard refonte + bug fixes UX | ✅ | 2026-04-16 AM |
 | Session XSS/Stealth-lifecycle : XSS esc(), ws re-raise, close() log, 6 worker toggles dynamiques + status dots, Logs→Live merge (6→5 tabs), Hagezi gambling/piracy (+227K), UI skeleton-once, cancellation drain | ✅ | 2026-04-16 PM |
 | Cookie consent + QUIC/HTTP3 probe + efficacy badges + fuzzy stem blocklist + start.command + Docker (Trixie/CVE patches) + tooltip workers count | ✅ | 2026-04-18 |
-| Tests | 83 verts, < 1s | 2026-04-18 |
+| Fuzzy blocklist v2 (label/TLD spray) + efficacy → Prometheus export + Docker scan post-rebuild (0C/1H/3M/22L, tous "not fixed" upstream Trixie) | ✅ | 2026-05-02 |
+| Tests | 94 verts, < 1s | 2026-05-02 |
 
 - **Fork** : github.com/amartidandqdq/noisy (from madereddy/noisy)
-- **⚠ dashboard_collector.py** : 687 lignes (god-object assumé, seule exception au max 180)
+- **⚠ dashboard_collector.py** : 715 lignes (god-object assumé, seule exception au max 180)
 
 ## Décisions clés
 

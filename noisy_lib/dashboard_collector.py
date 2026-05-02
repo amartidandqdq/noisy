@@ -698,4 +698,18 @@ class MetricsCollector:
             uid = c.profile.user_id
             lines.append(f'noisy_user_visited{{user="{uid}"}} {c.stats["visited"]}')
             lines.append(f'noisy_user_failed{{user="{uid}"}} {c.stats["failed"]}')
+        # Efficacy counters per stealth feature (events depuis demarrage process)
+        eff = _efficacy_snapshot()
+        if eff:
+            lines.append(f"# HELP noisy_efficacy_events_total Stealth feature events")
+            lines.append(f"# TYPE noisy_efficacy_events_total counter")
+            for feat, rec in eff.items():
+                safe = feat.replace('"', '').replace('\\', '')
+                lines.append(f'noisy_efficacy_events_total{{feature="{safe}"}} {rec.get("count", 0)}')
+            # Hit-rate prefetch (gauge)
+            pf = eff.get("dns_prefetch", {})
+            if "hit_rate" in pf:
+                lines.append(f"# HELP noisy_dns_prefetch_hit_rate DNS prefetch hit rate (0-1)")
+                lines.append(f"# TYPE noisy_dns_prefetch_hit_rate gauge")
+                lines.append(f"noisy_dns_prefetch_hit_rate {pf['hit_rate']}")
         return "\n".join(lines) + "\n"

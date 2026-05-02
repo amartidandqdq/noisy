@@ -47,8 +47,8 @@ class CrawlerBase:
         self.max_links_per_page = max_links_per_page
         self.url_blacklist = url_blacklist
         self.domain_blocklist = domain_blocklist or set()
-        # Stem index for variant hostname catching (built lazily on first use, shared static)
-        self._stem_index = None
+        # Fuzzy indexes for variant hostnames (stem + label/TLD spray); built lazily, shared
+        self._stem_index = None  # dict: {"stem": frozenset, "label": frozenset}
         self.cookie_persist = cookie_persist
         self.features = features or {}
         self.failed_counts: BoundedDict = BoundedDict(maxsize=10_000)
@@ -109,15 +109,20 @@ class CrawlerBase:
         parts = host.split(".")
         if any(".".join(parts[i:]) in self.domain_blocklist for i in range(len(parts))):
             return True
-        # Fuzzy stem match (lazy-built, shared per-class via cache)
+        # Fuzzy match (stem + label/TLD spray) - lazy-built, shared per-class via cache
         if self._stem_index is None:
-            from .blocklist_fuzzy import build_stem_index_cached
-            self._stem_index = build_stem_index_cached(self.domain_blocklist)
+            from .blocklist_fuzzy import _build_indexes_cached
+            self._stem_index = _build_indexes_cached(self.domain_blocklist)
         if self._stem_index:
-            from .blocklist_fuzzy import host_matches_stem
-            if host_matches_stem(host, self._stem_index):
+            from .blocklist_fuzzy import host_matches_stem, host_matches_label
+            if host_matches_stem(host, self._stem_index.get("stem", frozenset())):
                 from . import efficacy
                 efficacy.bump("blocklist_fuzzy_hits")
+                return True
+            if host_matches_label(host, self._stem_index.get("label", frozenset())):
+                from . import efficacy
+                efficacy.bump("blocklist_fuzzy_hits")
+                efficacy.bump("blocklist_fuzzy_label_hits")
                 return True
         return False
 
