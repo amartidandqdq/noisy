@@ -1,6 +1,6 @@
 # dns_stealth.py - Workers DNS stealth avances (tiers, background, burst, NXDOMAIN)
 # IN: domains, stop_event, dns_cache | OUT: none | MODIFIE: dns_cache
-# APPELE PAR: noisy.py | APPELLE: dns_resolver, dns_prefetch, config, tls_profiles
+# APPELE PAR: noisy.py | APPELLE: dns_resolver, tcp_tls_probe, profiles, config
 
 import asyncio
 import logging
@@ -17,8 +17,8 @@ from .config import (
     NXDOMAIN_PROBE_INTERVAL,
     THIRD_PARTY_DOMAINS, THIRD_PARTY_PER_PAGE_MAX, THIRD_PARTY_PER_PAGE_MIN,
 )
-from .dns_prefetch import _tcp_tls_probe
-from .profiles import _diurnal_weight
+from .tcp_tls_probe import tcp_tls_probe
+from .profiles import diurnal_sleep
 
 log = logging.getLogger(__name__)
 
@@ -52,18 +52,15 @@ async def thirdparty_burst_worker(
         head_tasks = []
         for domain, result in zip(third_party, results):
             if isinstance(result, str) and result:
-                head_tasks.append(_tcp_tls_probe(result, domain, rng))
+                head_tasks.append(tcp_tls_probe(result, domain, rng))
         if main_ip:
-            head_tasks.append(_tcp_tls_probe(main_ip, host, rng))
+            head_tasks.append(tcp_tls_probe(main_ip, host, rng))
         if head_tasks:
             await asyncio.gather(*head_tasks, return_exceptions=True)
             log.debug(f"[3RD-PARTY] host={host} burst={len(head_tasks)} connections")
 
         # 5. Sleep 15-60s x diurnal
-        lt = time.localtime()
-        hour = lt.tm_hour + lt.tm_min / 60
-        scale = 1.0 / max(0.1, _diurnal_weight(hour))
-        await asyncio.sleep(rng.uniform(15, 60) * scale)
+        await diurnal_sleep(rng, 15, 60)
 
     log.info(f"[FIN] thirdparty_burst | id={worker_id}")
 
@@ -89,14 +86,11 @@ async def background_noise_worker(
 
         ip = await dns_cache.resolve(domain)
         if ip:
-            await _tcp_tls_probe(ip, domain, rng)
+            await tcp_tls_probe(ip, domain, rng)
             log.debug(f"[BG-NOISE] domain={domain}")
 
         # Sleep 30-180s x diurnal (apps bavardent lentement)
-        lt = time.localtime()
-        hour = lt.tm_hour + lt.tm_min / 60
-        scale = 1.0 / max(0.1, _diurnal_weight(hour))
-        await asyncio.sleep(rng.uniform(BACKGROUND_MIN_SLEEP, BACKGROUND_MAX_SLEEP) * scale)
+        await diurnal_sleep(rng, BACKGROUND_MIN_SLEEP, BACKGROUND_MAX_SLEEP)
 
     log.info(f"[FIN] background_noise | id={worker_id}")
 
@@ -134,17 +128,13 @@ async def microburst_worker(
         head_tasks = []
         for domain, result in zip(burst_domains, results):
             if isinstance(result, str) and result:
-                head_tasks.append(_tcp_tls_probe(result, domain, rng))
+                head_tasks.append(tcp_tls_probe(result, domain, rng))
         if head_tasks:
             await asyncio.gather(*head_tasks, return_exceptions=True)
         log.debug(f"[BURST] size={len(burst_domains)} connected={len(head_tasks)}")
 
         # 4. SILENCE total — simule lecture/video
-        lt = time.localtime()
-        hour = lt.tm_hour + lt.tm_min / 60
-        scale = 1.0 / max(0.1, _diurnal_weight(hour))
-        silence = rng.uniform(BURST_SILENCE_MIN, BURST_SILENCE_MAX) * scale
-        await asyncio.sleep(silence)
+        await diurnal_sleep(rng, BURST_SILENCE_MIN, BURST_SILENCE_MAX)
 
     log.info(f"[FIN] microburst | id={worker_id}")
 
@@ -179,7 +169,7 @@ async def nxdomain_probe_worker(
             portal = rng.choice(CAPTIVE_PORTAL_DOMAINS)
             ip = await dns_cache.resolve(portal)
             if ip:
-                await _tcp_tls_probe(ip, portal, rng)
+                await tcp_tls_probe(ip, portal, rng)
                 log.debug(f"[CAPTIVE] check={portal}")
             next_captive = now + rng.uniform(*CAPTIVE_PORTAL_INTERVAL)
 

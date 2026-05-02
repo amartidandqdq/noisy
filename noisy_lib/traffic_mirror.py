@@ -7,7 +7,6 @@ import logging
 import platform
 import random
 import re
-import time
 from typing import List, Optional, Set
 from urllib.parse import urlsplit
 
@@ -15,7 +14,7 @@ import aiohttp
 
 from . import host_in_blocklist
 from .config import UA_FALLBACK
-from .profiles import _diurnal_weight
+from .profiles import diurnal_scale
 from .tls_profiles import DEFAULT_SSL_CONTEXT
 
 log = logging.getLogger(__name__)
@@ -153,9 +152,6 @@ async def mirror_worker(
                     )
 
             # Sleep with diurnal scaling
-            lt = time.localtime()
-            hour = lt.tm_hour + lt.tm_min / 60
-            scale = 1.0 / max(0.1, _diurnal_weight(hour))
-            await asyncio.sleep(MIRROR_POLL_INTERVAL * scale)
+            await asyncio.sleep(MIRROR_POLL_INTERVAL * diurnal_scale())
 
     log.info("[FIN] mirror_worker")

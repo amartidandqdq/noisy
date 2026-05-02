@@ -42,7 +42,7 @@ noisy_lib/
   config_loader.py        → Parser CLI + validation + lecture JSON (144 lignes)
   structures.py           → LRUSet / BoundedDict / TTLDict (90 lignes)
   metrics.py              → SharedMetrics cross-crawler (127 lignes)
-  profiles.py             → UserProfile / UAPool / stealth headers / diurnal (202 lignes)
+  profiles.py             → UserProfile / UAPool / stealth headers / diurnal + diurnal_sleep helper (231 lignes ⚠ over-180)
   extractor.py            → Extraction liens + assets HTML (84 lignes)
   fetchers.py             → Fetch CRUX / UAs / OISD+Hagezi blocklists / history (185 lignes)
   rate_limiter.py         → Délai inter-requêtes par domaine (54 lignes)
@@ -52,8 +52,9 @@ noisy_lib/
   workers.py              → DNS / stats / UA refresh / HEAD / search noise (220 lignes)
   tls_profiles.py         → Rotation cipher TLS + ALPN pour diversité JA3 (82 lignes)
   dns_resolver.py         → DNS TTL cache avec IP persistence via dnspython (111 lignes)
-  dns_prefetch.py         → DNS prefetch browser-like depuis liens des pages (170 lignes)
-  dns_stealth.py          → 3rd-party burst, background noise, micro-burst, NXDOMAIN (163 lignes)
+  dns_prefetch.py         → DNS prefetch browser-like depuis liens des pages (147 lignes)
+  dns_stealth.py          → 3rd-party burst, background noise, micro-burst, NXDOMAIN (179 lignes)
+  tcp_tls_probe.py        → TCP+TLS+GET Range (anti-DPI) partage par dns_prefetch + dns_stealth (55 lignes)
   ech_client.py           → ECH probe via curl_cffi + ech_worker periodique (88 lignes)
   stream_noise.py         → Simulation streaming CDN avec chunks (101 lignes)
   depth_model.py          → Modèle probabiliste profondeur crawl (28 lignes)
@@ -100,8 +101,9 @@ config.py (feuille — 0 import noisy_lib)
   ← crawler_session.py ← config, cookie_store, metrics, profiles, throttle, rate_limiter, structures
   ← crawler.py ← crawler_session, depth_model, referer_chain, asset_fetcher, extractor, fetch_client, profiles
   ← dns_resolver.py ← config (dnspython)
-  ← dns_prefetch.py ← config, dns_resolver, tls_profiles, profiles
-  ← dns_stealth.py ← config, dns_resolver, tls_profiles, profiles
+  ← tcp_tls_probe.py ← config, tls_profiles
+  ← dns_prefetch.py ← config, dns_resolver, tls_profiles, profiles, tcp_tls_probe
+  ← dns_stealth.py ← config, dns_resolver, profiles, tcp_tls_probe
   ← ech_client.py ← config, tls_profiles (curl_cffi optional)
   ← stream_noise.py ← config, dns_resolver, tls_profiles, throttle
   ← workers.py ← __init__, config, fetchers, tls_profiles, dns_resolver
@@ -122,7 +124,7 @@ config.py (feuille — 0 import noisy_lib)
 | Délai entre requêtes domaine | `rate_limiter.py` |
 | Extraction de liens | `extractor.py` |
 | Simulation utilisateur (sleep, AFK) | `crawler.py` |
-| Modèle d'activité heure/jour | `profiles.py` (_diurnal_weight) |
+| Modèle d'activité heure/jour | `profiles.py` (_diurnal_weight, diurnal_sleep, diurnal_scale) |
 | Sources de sites/UA | `fetchers.py` |
 | Stats ou bruit DNS/HEAD/search | `workers.py` |
 | Dashboard routes / API | `dashboard.py` |

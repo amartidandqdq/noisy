@@ -513,7 +513,7 @@ class MetricsCollector:
                         "asset_fetching", "bandwidth_throttle",
                         "dns_optimized", "dns_prefetch",
                         "thirdparty_burst", "background_noise", "nxdomain_probes",
-                        "ech", "stream_noise"):
+                        "ech", "stream_noise", "cookie_consent", "quic_probe"):
                 state[key] = c0.features.get(key, False)
         return state
 
