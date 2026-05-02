@@ -67,7 +67,8 @@ noisy_lib/
   quic_probe.py           → QUIC Initial UDP/443 vers CDN HTTP/3-capables (108 lignes)
   blocklist_fuzzy.py      → Stem index pour catch variants hostname (84 lignes)
   efficacy.py             → Compteurs d'efficacite par feature stealth (60 lignes)
-  dashboard_collector.py  → MetricsCollector + settings persistence + stealth worker lifecycle + Prometheus efficacy export (715 lignes)
+  prometheus_exporter.py  → Format Prometheus text-based exposition (/metrics) (57 lignes)
+  dashboard_collector.py  → MetricsCollector + settings persistence + stealth worker lifecycle (676 lignes)
   dashboard.py            → FastAPI routes + WebSocket + webhook + mount /css /js; lit index.html par requete (200 lignes)
   static/index.html       → Entry point + sidebar nav 5 onglets (Live/Users/Stealth/DNS/Domains)
   static/css/main.css     → Theme cyberpunk + responsive + dense mode + sidebar layout + feat-status dots
@@ -107,7 +108,8 @@ config.py (feuille — 0 import noisy_lib)
   ← workers.py ← __init__, config, fetchers, tls_profiles, dns_resolver
   ← ws_noise.py ← config, profiles
   ← traffic_mirror.py ← __init__, config, profiles, tls_profiles
-  ← dashboard_collector.py ← config, profiles, workers
+  ← prometheus_exporter.py ← efficacy
+  ← dashboard_collector.py ← config, profiles, workers, prometheus_exporter (lazy)
   ← dashboard.py ← config, dashboard_collector
   ← noisy.py (racine — importe tout)
 ```
@@ -127,6 +129,7 @@ config.py (feuille — 0 import noisy_lib)
 | Stats ou bruit DNS/HEAD/search | `workers.py` |
 | Dashboard routes / API | `dashboard.py` |
 | Dashboard métriques / features | `dashboard_collector.py` |
+| Format Prometheus `/metrics` | `prometheus_exporter.py` |
 | Dashboard layout / nav / styles | `static/css/main.css` |
 | Dashboard tab routing / shortcuts | `static/js/app.js` |
 | Dashboard render fonctions | `static/js/ui.js` |
@@ -238,7 +241,7 @@ Détails complets archivés dans `CLAUDE-Archive.md`. Référence rapide :
 | **Anti-DPI** | Range payload 4-12KB (vs HEAD 0-byte), ECH curl_cffi/BoringSSL, streaming noise (long CDN keep-alive chunks 128-512KB), QUIC Initial UDP/443 vers CDN HTTP/3 (Cloudflare/Google/Fastly/Akamai) | `dns_prefetch.py`, `ech_client.py`, `stream_noise.py`, `quic_probe.py` |
 | **CMP** | Detection 8 markers CMP (OneTrust/Cookiebot/Didomi/Sourcepoint/Quantcast/TrustArc/Iubenda/Termly), fire 1-2 endpoints consent par page avec jitter | `page_consent.py` |
 | **Defense** | Stem index (numeric variants `grandpashabet7092.com`) + label/TLD-spray index (variants type `themoviesflix.{com,net,cc,llc}` quand label ≥10 chars sur ≥3 TLDs distincts) | `blocklist_fuzzy.py` |
-| **Observability** | Compteurs efficacy par feature (events count + hit-rate prefetch + last-activity), badge cyan sous toggles + export Prometheus (`noisy_efficacy_events_total{feature="..."}` + `noisy_dns_prefetch_hit_rate`) | `efficacy.py`, `dashboard_collector.py` |
+| **Observability** | Compteurs efficacy par feature (events count + hit-rate prefetch + last-activity), badge cyan sous toggles + export Prometheus (`noisy_efficacy_events_total{feature="..."}` + `noisy_dns_prefetch_hit_rate`) | `efficacy.py`, `prometheus_exporter.py` |
 | **Modèle activité** | Diurnal 24h (pic midi/creux nuit), scheduler (`--schedule 8-23` wrap), geo profiles (21 locales), mobile sim (10 UAs, Sec-CH-UA-Mobile), traffic replay JSON | `profiles.py`, `config.py` |
 | **Filtrage / sécurité** | OISD NSFW 524K + Phishing 335K + Hagezi Gambling 214K + Hagezi Piracy 12K = ~1.08M, TLD/Region filter (6 presets), URL blacklist substring, auto-pause fail%>50, connection health check | `fetchers.py`, `extractor.py`, `dashboard_collector.py` |
 | **UX dashboard** | Settings persistence (.noisy_settings.json), domain categories (11), live config edit, feature toggles + **status dots** (live/off/error), sidebar 5 tabs + raccourcis 1-5, `esc()` XSS helper | `dashboard_collector.py`, `static/` |
@@ -257,7 +260,7 @@ Historique complet (P0→P4, 8+6+3+11 bugfixes, 9+5+4+5 features, ALPN/settings 
 | Tests | 94 verts, < 1s | 2026-05-02 |
 
 - **Fork** : github.com/amartidandqdq/noisy (from madereddy/noisy)
-- **⚠ dashboard_collector.py** : 715 lignes (god-object assumé, seule exception au max 180)
+- **⚠ dashboard_collector.py** : 676 lignes (god-object assumé, seule exception au max 180)
 
 ## Décisions clés
 
