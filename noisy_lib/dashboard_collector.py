@@ -1,9 +1,8 @@
 # dashboard_collector.py - Collecte et gestion des metriques crawlers
-# IN: crawlers, shared_visited, rate_limiter, ua_pool, shared_metrics | OUT: MetricsCollector, helpers
-# MODIFIE: .noisy_settings.json | APPELE PAR: dashboard.py, noisy.py | APPELLE: config, profiles
+# IN: crawlers, shared_visited, rate_limiter, ua_pool, shared_metrics | OUT: MetricsCollector
+# APPELE PAR: dashboard.py, noisy.py | APPELLE: stealth_lifecycle, runtime_config, profiles, config
 
 import asyncio
-import json
 import logging
 import random
 import time
@@ -11,12 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, TYPE_CHECKING
 
+from . import runtime_config, stealth_lifecycle
 from .config import (
-    ALERT_FAIL_THRESHOLD, AUTO_PAUSE_FAIL_THRESHOLD, AUTO_PAUSE_MIN_REQUESTS,
-    DEFAULT_URL_BLACKLIST,
-    GEO_PROFILES, GENERIC_TLDS, MOBILE_UA_POOL, REGION_PRESETS,
+    ALERT_FAIL_THRESHOLD, DEFAULT_URL_BLACKLIST,
+    GEO_PROFILES, MOBILE_UA_POOL,
 )
-from .profiles import UserProfile, _diurnal_weight
+from .profiles import UserProfile, _diurnal_weight, is_mobile_ua as _is_mobile_ua
+from .stealth_lifecycle import STEALTH_WORKER_KEYS
 
 if TYPE_CHECKING:
     from .crawler import UserCrawler
@@ -27,42 +27,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-from . import efficacy as _eff
+STATIC_DIR = Path(__file__).parent / "static"
+
 
 def _efficacy_snapshot():
+    from . import efficacy as _eff
     return _eff.snapshot()
-
-from .profiles import is_mobile_ua as _is_mobile_ua
-
-STATIC_DIR = Path(__file__).parent / "static"
-SETTINGS_FILE = Path(__file__).parent.parent / ".noisy_settings.json"
-
-# Features that spawn background workers; managed by MetricsCollector lifecycle.
-STEALTH_WORKER_KEYS = (
-    "dns_prefetch", "thirdparty_burst", "background_noise",
-    "nxdomain_probes", "stream_noise", "ech", "quic_probe",
-)
-
-
-def _save_settings(data: dict):
-    """Sauvegarde les settings dans .noisy_settings.json."""
-    try:
-        existing = _load_settings()
-        existing.update(data)
-        SETTINGS_FILE.write_text(json.dumps(existing, indent=2), encoding="utf-8")
-        log.debug(f"[SETTINGS] sauvegarde: {list(data.keys())}")
-    except Exception as e:
-        log.warning(f"[SETTINGS] erreur sauvegarde: {e}")
-
-
-def _load_settings() -> dict:
-    """Charge les settings persistes."""
-    try:
-        if SETTINGS_FILE.exists():
-            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-    except Exception as e:
-        log.warning(f"[SETTINGS] erreur lecture: {e}")
-    return {}
 
 
 def _get_system_dns() -> List[str]:
@@ -82,11 +52,6 @@ def _get_system_dns() -> List[str]:
                 return [l.split()[1] for l in f if l.strip().startswith("nameserver")]
     except Exception:
         return ["unknown"]
-
-
-def _extract_tld_from_url(url: str) -> str:
-    from . import extract_tld
-    return extract_tld(url)
 
 
 class MetricsCollector:
@@ -235,86 +200,13 @@ class MetricsCollector:
         }
 
     def get_runtime_config(self) -> dict:
-        if not self.crawlers:
-            return {}
-        c = self.crawlers[0]
-        cfg = {
-            "num_users": len(self.crawlers),
-            "min_sleep": c.min_sleep,
-            "max_sleep": c.max_sleep,
-            "max_depth": c.max_depth,
-            "concurrency": c.concurrency,
-            "max_links_per_page": c.max_links_per_page,
-            "domain_delay": self.rate_limiter._domain_delay,
-        }
-        if self.tld_filter:
-            cfg["tld_filter"] = sorted(self.tld_filter)
-        if self.regions:
-            cfg["regions"] = sorted(self.regions)
-        return cfg
+        return runtime_config.get_runtime_config(self)
 
     def apply_config(self, data: dict) -> list:
-        errors = []
-        safe = {}
-        for key, cast, lo, hi in [
-            ("min_sleep", float, 0.1, 300),
-            ("max_sleep", float, 0.1, 600),
-            ("max_depth", int, 1, 50),
-            ("max_links_per_page", int, 1, 500),
-            ("domain_delay", float, 0, 120),
-        ]:
-            if key in data:
-                try:
-                    v = cast(data[key])
-                    if not (lo <= v <= hi):
-                        errors.append(f"{key}: doit etre entre {lo} et {hi}")
-                    else:
-                        safe[key] = v
-                except (ValueError, TypeError):
-                    errors.append(f"{key}: valeur invalide")
-        if errors:
-            return errors
-        for c in self.crawlers:
-            if "min_sleep" in safe:
-                c.min_sleep = safe["min_sleep"]
-            if "max_sleep" in safe:
-                c.max_sleep = safe["max_sleep"]
-            if "max_depth" in safe:
-                c.max_depth = safe["max_depth"]
-            if "max_links_per_page" in safe:
-                c.max_links_per_page = safe["max_links_per_page"]
-        if "domain_delay" in safe:
-            self.rate_limiter.domain_delay = safe["domain_delay"]
-        _save_settings({"config": safe})
-        return []
+        return runtime_config.apply_config(self, data)
 
     def restore_saved_settings(self):
-        """Restaure les settings persistes depuis .noisy_settings.json."""
-        saved = _load_settings()
-        if not saved:
-            return
-        restored = []
-        if "features" in saved:
-            try:
-                self.apply_features(saved["features"])
-                restored.append("features")
-            except Exception as e:
-                log.warning(f"[SETTINGS] erreur restore features: {e}")
-        if "config" in saved:
-            try:
-                self.apply_config(saved["config"])
-                restored.append("config")
-            except Exception as e:
-                log.warning(f"[SETTINGS] erreur restore config: {e}")
-        if "tld_filter" in saved:
-            try:
-                tf = saved["tld_filter"]
-                self.apply_tld_filter(tf.get("regions", []), tf.get("custom_tlds", []))
-                restored.append("tld_filter")
-            except Exception as e:
-                log.warning(f"[SETTINGS] erreur restore tld_filter: {e}")
-        if restored:
-            log.info(f"[SETTINGS] restaure: {', '.join(restored)}")
+        runtime_config.restore_saved_settings(self)
 
     def set_crawler_params(self, stop_event, top_sites, params: dict):
         """Stocke les parametres necessaires pour creer de nouveaux crawlers."""
@@ -323,91 +215,19 @@ class MetricsCollector:
         self._crawler_params = params
 
     def setup_stealth_context(self, dns_hosts, dns_cache):
-        """Context requis pour spawn/cancel des workers stealth via toggles."""
-        self._stealth_ctx = {"dns_hosts": dns_hosts, "dns_cache": dns_cache}
+        stealth_lifecycle.setup_context(self, dns_hosts, dns_cache)
 
     def _start_stealth_worker(self, key: str):
-        """Spawn le(s) worker(s) pour une feature stealth. Idempotent."""
-        if not self._stealth_ctx:
-            log.warning(f"[FEATURES] {key}: context non init, skip spawn")
-            return
-        # Already running?
-        live = [t for t in self._stealth_workers.get(key, []) if not t.done()]
-        if live:
-            return
-        stop = self._stop_event
-        dns_hosts = self._stealth_ctx["dns_hosts"]
-        dns_cache = self._stealth_ctx["dns_cache"]
-        bl = self._crawler_params.get("domain_blocklist", set()) if self._crawler_params else set()
-        tasks = []
-        if key == "dns_prefetch":
-            from .dns_prefetch import dns_prefetch_worker
-            tasks.append(asyncio.create_task(
-                dns_prefetch_worker(dns_hosts, stop, dns_cache, domain_blocklist=bl, worker_id=0)))
-        elif key == "thirdparty_burst":
-            from .dns_stealth import thirdparty_burst_worker, microburst_worker
-            tasks.append(asyncio.create_task(thirdparty_burst_worker(dns_hosts, stop, dns_cache)))
-            tasks.append(asyncio.create_task(microburst_worker(dns_hosts, stop, dns_cache)))
-        elif key == "background_noise":
-            from .dns_stealth import background_noise_worker
-            tasks.append(asyncio.create_task(background_noise_worker(stop, dns_cache)))
-        elif key == "nxdomain_probes":
-            from .dns_stealth import nxdomain_probe_worker
-            tasks.append(asyncio.create_task(nxdomain_probe_worker(stop, dns_cache)))
-        elif key == "stream_noise":
-            from .stream_noise import stream_noise_worker
-            tasks.append(asyncio.create_task(stream_noise_worker(stop, dns_cache)))
-        elif key == "ech":
-            from .ech_client import ech_worker
-            tasks.append(asyncio.create_task(ech_worker(dns_hosts, stop)))
-        elif key == "quic_probe":
-            from .quic_probe import quic_worker
-            import random as _r
-            tasks.append(asyncio.create_task(quic_worker(stop, _r.Random(), dns_cache)))
-        if tasks:
-            self._stealth_workers[key] = tasks
-            log.info(f"[FEATURES] {key}: {len(tasks)} worker(s) demarre(s)")
+        stealth_lifecycle.start_worker(self, key)
 
     def _stop_stealth_worker(self, key: str):
-        """Cancel tous les workers d'une feature + drain en arriere-plan."""
-        tasks = self._stealth_workers.get(key, [])
-        alive = [t for t in tasks if not t.done()]
-        for t in alive:
-            t.cancel()
-        self._stealth_workers[key] = []
-        if alive:
-            drain = asyncio.create_task(self._drain_cancelled(alive, key))
-            self._drain_tasks.add(drain)
-            drain.add_done_callback(self._drain_tasks.discard)
-            log.info(f"[FEATURES] {key}: {len(alive)} worker(s) arrete(s)")
-
-    async def _drain_cancelled(self, tasks, key: str):
-        """Attend la terminaison propre de tasks cancelled (evite RuntimeWarning)."""
-        await asyncio.gather(*tasks, return_exceptions=True)
+        stealth_lifecycle.stop_worker(self, key)
 
     def stealth_worker_status(self) -> dict:
-        """Pour chaque feature worker: running (int), expected (on/off)."""
-        status = {}
-        features = self.crawlers[0].features if self.crawlers else {}
-        for key in STEALTH_WORKER_KEYS:
-            tasks = self._stealth_workers.get(key, [])
-            running = sum(1 for t in tasks if not t.done())
-            enabled = bool(features.get(key, False))
-            if enabled and running > 0:
-                state = "running"
-            elif enabled and running == 0:
-                state = "error"  # toggle ON mais worker mort
-            else:
-                state = "off"
-            status[key] = {"state": state, "running": running}
-        return status
+        return stealth_lifecycle.worker_status(self)
 
     def sync_stealth_workers(self):
-        """Au demarrage: spawn les workers pour toutes les features deja ON."""
-        features = self.crawlers[0].features if self.crawlers else {}
-        for key in STEALTH_WORKER_KEYS:
-            if features.get(key, False):
-                self._start_stealth_worker(key)
+        stealth_lifecycle.sync_workers(self)
 
     def add_user(self) -> dict:
         """Cree un nouveau crawler virtuel et le lance."""
@@ -628,48 +448,12 @@ class MetricsCollector:
                 changes.append(f"{key}={'on' if val else 'off'}")
 
         log.info(f"[FEATURES] {', '.join(changes)}")
-        # Save FULL features state (not just the partial data from this click)
         full_features = self._get_all_features_state()
-        _save_settings({"features": full_features})
+        runtime_config.save_settings({"features": full_features})
         return {"status": "ok", "changes": changes}
 
     def apply_tld_filter(self, regions: List[str], custom_tlds: List[str]) -> dict:
-        """Applique un nouveau filtre TLD live sur les crawlers."""
-        allowed = set()
-        for r in regions:
-            allowed |= REGION_PRESETS.get(r, set())
-        allowed |= {t.strip().lower() for t in custom_tlds if t.strip()}
-        self.regions = regions
-        self.tld_filter = allowed
-
-        if not self.all_top_sites:
-            return {"status": "ok", "filtered": 0, "message": "pas de sites CRUX charges"}
-
-        if allowed:
-            filtered = [s for s in self.all_top_sites
-                        if _extract_tld_from_url(s) in GENERIC_TLDS or _extract_tld_from_url(s) in allowed]
-        else:
-            filtered = list(self.all_top_sites)
-
-        for c in self.crawlers:
-            shuffled = list(filtered)
-            c.rng.shuffle(shuffled)
-            c.root_urls = set(shuffled[:500])
-            # Drain queue and refill with filtered sites
-            while not c.queue.empty():
-                try:
-                    c.queue.get_nowait()
-                    c.queue.task_done()
-                except Exception:
-                    break
-            for url in shuffled[:200]:
-                try:
-                    c.queue.put_nowait((url, 0, None, c.max_depth))
-                except Exception:
-                    break
-        log.info(f"[TLD] Filtre live applique: {len(filtered)} sites (ccTLD: {sorted(allowed) if allowed else 'aucun'})")
-        _save_settings({"tld_filter": {"regions": regions, "custom_tlds": custom_tlds}})
-        return {"status": "ok", "filtered": len(filtered), "tld_filter": sorted(allowed)}
+        return runtime_config.apply_tld_filter(self, regions, custom_tlds)
 
     def prometheus_metrics(self) -> str:
         from . import prometheus_exporter

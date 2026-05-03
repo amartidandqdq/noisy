@@ -322,3 +322,38 @@ DEFAULT_URL_BLACKLIST = [
     # ---- TLD adultes ----
     ".xxx", ".porn", ".sex", ".adult",
 ]
+
+# ---- BROWSER HEADER VARIANTS (Accept / Cache / Sec-Fetch / Sec-CH-UA) ----
+ACCEPT_VARIANTS = [
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+]
+
+CACHE_VARIANTS = [
+    {"Cache-Control": "no-cache", "Pragma": "no-cache"},
+    {"Cache-Control": "max-age=0"},
+    {},
+]
+
+SEC_FETCH_NAVIGATE = {"Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-User": "?1"}
+SEC_FETCH_SAME = {"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+SEC_FETCH_CROSS = {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
+
+SEC_CH_UA_COMBOS = [
+    {"Sec-CH-UA": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"', "Sec-CH-UA-Platform": '"Windows"'},
+    {"Sec-CH-UA": '"Chromium";v="125", "Google Chrome";v="125", "Not-A.Brand";v="99"', "Sec-CH-UA-Platform": '"macOS"'},
+    {"Sec-CH-UA": '"Chromium";v="126", "Microsoft Edge";v="126", "Not-A.Brand";v="99"', "Sec-CH-UA-Platform": '"Windows"'},
+    {"Sec-CH-UA": '"Chromium";v="123", "Google Chrome";v="123", "Not-A.Brand";v="99"', "Sec-CH-UA-Platform": '"Linux"'},
+]
+
+EXTERNAL_REFERRERS = [
+    "https://www.google.com/", "https://www.google.com/search?q=",
+    "https://www.bing.com/search?q=", "https://duckduckgo.com/?q=",
+    "https://www.facebook.com/", "https://t.co/",
+    "https://www.reddit.com/", "https://news.ycombinator.com/",
+]
+
+MOBILE_EXTRA_HEADERS = {"Sec-CH-UA-Mobile": "?1"}
+MOBILE_UA_TOKENS = ("Mobile", "iPhone", "iPad", "Android", "iPod", "Mobi", "Windows Phone")

@@ -168,6 +168,11 @@ def create_app(collector: MetricsCollector) -> FastAPI:
                 await asyncio.sleep(DASHBOARD_UPDATE_INTERVAL)
         except WebSocketDisconnect:
             log.info("[DASHBOARD] client WebSocket deconnecte")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[DASHBOARD] WebSocket handler erreur inattendue")
+            raise
 
     return app
 

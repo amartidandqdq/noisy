@@ -18,12 +18,12 @@ Flags principaux : `--num_users N`, `--schedule 8-23`, `--geo europe_fr`, `--reg
 ## Tests
 ```bash
 pip install -r requirements-dev.txt
-python -m pytest tests/ -v              # 83 tests, < 1s
+python -m pytest tests/ -v              # 99 tests, < 1s
 ```
 
 ## Règles de modularité (PROTECTED)
 
-- **Max 180 lignes par fichier** (sauf `config.py` données pures, `dashboard_collector.py` god-object assumé)
+- **Max 180 lignes par fichier** (sauf `config.py` données pures, `dashboard_collector.py` god-object — désormais 460 lignes après extracts)
 - **1 fichier = 1 responsabilité** — si un fichier fait 2 choses, splitter
 - **Données pures → `config.py`** (constantes, UAs, geo profiles, catégories, blocklists URLs)
 - **Logique comportementale → fichier dédié** (profiles.py, crawler.py, etc.)
@@ -38,11 +38,11 @@ python -m pytest tests/ -v              # 83 tests, < 1s
 noisy.py                  → Orchestration + entry point (300 lignes)
 noisy_lib/
   __init__.py             → Utilitaires partagés: host_in_blocklist, extract_tld (19 lignes)
-  config.py               → TOUTES constantes + données pures: geo, UAs, catégories (218 lignes)
+  config.py               → TOUTES constantes + données pures: geo, UAs, catégories, header variants (359 lignes)
   config_loader.py        → Parser CLI + validation + lecture JSON (144 lignes)
   structures.py           → LRUSet / BoundedDict / TTLDict (90 lignes)
   metrics.py              → SharedMetrics cross-crawler (127 lignes)
-  profiles.py             → UserProfile / UAPool / stealth headers / diurnal + diurnal_sleep helper (231 lignes ⚠ over-180)
+  profiles.py             → UserProfile / UAPool / fingerprint rotation / diurnal helpers (192 lignes ⚠ over-180)
   extractor.py            → Extraction liens + assets HTML (84 lignes)
   fetchers.py             → Fetch CRUX / UAs / OISD+Hagezi blocklists / history (185 lignes)
   rate_limiter.py         → Délai inter-requêtes par domaine (54 lignes)
@@ -67,10 +67,12 @@ noisy_lib/
   page_consent.py         → Detection CMP + simulation acceptation cookies (84 lignes)
   quic_probe.py           → QUIC Initial UDP/443 vers CDN HTTP/3-capables (108 lignes)
   blocklist_fuzzy.py      → Stem index pour catch variants hostname (84 lignes)
-  efficacy.py             → Compteurs d'efficacite par feature stealth (60 lignes)
+  efficacy.py             → Compteurs + sliding window prefetch hit-rate (78 lignes)
   prometheus_exporter.py  → Format Prometheus text-based exposition (/metrics) (57 lignes)
-  dashboard_collector.py  → MetricsCollector + settings persistence + stealth worker lifecycle (676 lignes)
-  dashboard.py            → FastAPI routes + WebSocket + webhook + mount /css /js; lit index.html par requete (200 lignes)
+  stealth_lifecycle.py    → Spawn/cancel/drain workers stealth (extract de dashboard_collector) (110 lignes)
+  runtime_config.py       → Settings persistence + apply_config + apply_tld_filter (extract) (162 lignes)
+  dashboard_collector.py  → MetricsCollector + collect/apply_features (god-object, désormais 460 lignes)
+  dashboard.py            → FastAPI routes + WebSocket + webhook + mount /css /js; lit index.html par requete (206 lignes)
   static/index.html       → Entry point + sidebar nav 5 onglets (Live/Users/Stealth/DNS/Domains)
   static/css/main.css     → Theme cyberpunk + responsive + dense mode + sidebar layout + feat-status dots
   static/js/app.js        → Router (tabs) + WS + REST + keyboard shortcuts (1-5, P, T, D)
@@ -111,7 +113,9 @@ config.py (feuille — 0 import noisy_lib)
   ← ws_noise.py ← config, profiles
   ← traffic_mirror.py ← __init__, config, profiles, tls_profiles
   ← prometheus_exporter.py ← efficacy
-  ← dashboard_collector.py ← config, profiles, workers, prometheus_exporter (lazy)
+  ← stealth_lifecycle.py ← (lazy) dns_prefetch, dns_stealth, stream_noise, ech_client, quic_probe
+  ← runtime_config.py ← config, __init__ (extract_tld lazy)
+  ← dashboard_collector.py ← config, profiles, runtime_config, stealth_lifecycle, prometheus_exporter (lazy)
   ← dashboard.py ← config, dashboard_collector
   ← noisy.py (racine — importe tout)
 ```
@@ -139,10 +143,12 @@ config.py (feuille — 0 import noisy_lib)
 | Métriques agrégées cross-crawler | `metrics.py` (SharedMetrics) |
 | Blocklists OISD (NSFW/phishing) | `fetchers.py` + `config.py` (OISD URLs) |
 | Geo profiles / mobile UAs / fallback UAs | `config.py` (GEO_PROFILES, MOBILE_UA_POOL, UA_FALLBACK) |
-| Stealth headers (Sec-Fetch, Sec-CH-UA) | `profiles.py` |
+| Stealth header variants (Accept/Cache/Sec-Fetch/Sec-CH-UA/External-Referrers) | `config.py` (data) ; `profiles.py` (compose) |
 | TLD/région filter | `config.py` (REGION_PRESETS) + `noisy.py` |
 | Features toggle (dashboard) | `dashboard_collector.py` (apply_features) |
-| Settings persistence | `dashboard_collector.py` (.noisy_settings.json) |
+| Settings persistence | `runtime_config.py` (save_settings/load_settings/.noisy_settings.json) |
+| Apply config / TLD filter live | `runtime_config.py` (apply_config, apply_tld_filter, restore_saved_settings) |
+| Spawn/cancel/drain workers stealth | `stealth_lifecycle.py` (start_worker/stop_worker/sync_workers + STEALTH_WORKER_KEYS) |
 | Utilitaire blocklist/TLD | `__init__.py` |
 | TLS cipher rotation / JA3 | `tls_profiles.py` |
 | Modèle profondeur crawl | `depth_model.py` |
@@ -162,7 +168,7 @@ config.py (feuille — 0 import noisy_lib)
 | Detection CMP cookies | `page_consent.py` (CMP_MARKERS) |
 | QUIC/HTTP3 probe UDP | `quic_probe.py` (QUIC_CAPABLE_HOSTS, _build_quic_initial) |
 | Stem fuzzy blocklist (numeric + label/TLD spray) | `blocklist_fuzzy.py` (MIN_STEM_LEN=8/MIN_VARIANTS=3 numeric ; MIN_LABEL_LEN=10/MIN_TLD_VARIANTS=3 spray) |
-| Compteurs efficacy par feature | `efficacy.py` (bump, snapshot) |
+| Compteurs efficacy par feature | `efficacy.py` (bump, snapshot, sliding window 1000 obs prefetch) |
 | Container Docker | `Dockerfile`, `docker-compose.yml`, `.dockerignore` |
 
 ## Dashboard — fonctionnalités
@@ -207,6 +213,9 @@ Endpoints externes : `/metrics` (Prometheus), webhooks POST (pause/resume/alert)
 - **UI skeleton-once** : `renderStealthToggles` build le DOM une seule fois via `box.dataset.built`, puis ne fait que des state updates (toggle.classList, feat-status className/textContent). Évite les rebuilds innerHTML qui détruisent handlers et focus.
 - **dashboard.py lit index.html à chaque requête** : pas de cache en mémoire. Changements HTML visibles après simple reload browser, pas de restart Python requis.
 - **`apply_features` whitelist** : la boucle propage les flags vers `crawler.features` UNIQUEMENT pour les keys listées. Tout nouveau toggle (`cookie_consent`, `quic_probe`, …) doit etre ajoute sinon le clic UI reste inerte (toggle visuel ON mais state pas applique).
+- **Whitelist drift `_get_all_features_state`** : tout toggle ajoute dans `apply_features` doit AUSSI etre dans la tuple `_get_all_features_state` sinon il s'applique au runtime mais ne survit PAS au restart. Bug rencontre 02-05 sur `cookie_consent`/`quic_probe`. `tests/test_features_state_persistence.py` itere la whitelist `apply_features` et asserte que toute key est dans le state -> blinde contre futur oubli.
+- **`asyncio.Lock()` au constructeur** : deprecated Py 3.10+ (warns "no current event loop"), peut casser tests qui run apres un `asyncio.run`. Toujours lazy-init dans premiere coroutine async qui en a besoin. Bug vu cette session sur `UAPool._lock`.
+- **WebSocket handler exceptions** : `dashboard.py:ws_metrics` doit `log.exception(...) + raise` sur `except Exception` non-disconnect, sinon erreur silencieuse cote uvicorn. `CancelledError` doit etre re-raise explicitement avant `except Exception`.
 - **Sed-style edits sans assert** : modifs Python via `str.replace()` peuvent silencieusement no-op si le marqueur a derive d'un caractere. Toujours `assert old in src` avant `replace`. Bug vu cette session sur l'import `_efficacy_snapshot` perdu.
 - **Docker CVE drift** : `python:3.12-slim` (Bookworm) trainait openssl/tar/pip vulnerables. Bump a `python:3.13-slim-trixie` + `apt upgrade -y` + `pip>=25.3` dans builder. Re-scan apres chaque rebuild.
 
@@ -258,11 +267,13 @@ Historique complet (P0→P4, 8+6+3+11 bugfixes, 9+5+4+5 features, ALPN/settings 
 | Code review + 11 fixes + Dashboard refonte + bug fixes UX | ✅ | 2026-04-16 AM |
 | Session XSS/Stealth-lifecycle : XSS esc(), ws re-raise, close() log, 6 worker toggles dynamiques + status dots, Logs→Live merge (6→5 tabs), Hagezi gambling/piracy (+227K), UI skeleton-once, cancellation drain | ✅ | 2026-04-16 PM |
 | Cookie consent + QUIC/HTTP3 probe + efficacy badges + fuzzy stem blocklist + start.command + Docker (Trixie/CVE patches) + tooltip workers count | ✅ | 2026-04-18 |
-| Fuzzy blocklist v2 (label/TLD spray) + efficacy → Prometheus export + Docker scan post-rebuild (0C/1H/3M/22L, tous "not fixed" upstream Trixie) | ✅ | 2026-05-02 |
-| Tests | 94 verts, < 1s | 2026-05-02 |
+| Fuzzy v2 (label/TLD spray, +5,680 labels) + efficacy → Prometheus + Docker scan post-rebuild (0C/1H/3M/22L upstream-bound) + extract `prometheus_exporter.py` + `tcp_tls_probe.py` + `diurnal_sleep` helper (-25 lignes dedup) + fix bug persistence cookie_consent/quic_probe (3 PRs squash-merged) | ✅ | 2026-05-02 |
+| Refactor session : extract `stealth_lifecycle.py` (110l) + `runtime_config.py` (162l) du god-object (676→460 -32%) ; profiles.py header-data → config.py (231→192) ; sliding window prefetch hit-rate (1000 obs) ; WebSocket handler log+raise ; `UAPool._lock` lazy-init ; +24 tests (efficacy thread-safety, CMP, QUIC RFC 9000) | ✅ | 2026-05-03 |
+| Tests | 123 verts, < 3s | 2026-05-03 |
 
 - **Fork** : github.com/amartidandqdq/noisy (from madereddy/noisy)
-- **⚠ dashboard_collector.py** : 676 lignes (god-object assumé, seule exception au max 180)
+- **⚠ dashboard_collector.py** : 460 lignes (god-object assumé après extracts, exception au max 180)
+- **⚠ profiles.py** : 192 lignes (légèrement over-180, contient UserProfile + UAPool + diurnal helpers)
 
 ## Décisions clés
 
@@ -285,3 +296,15 @@ Historique complet (P0→P4, 8+6+3+11 bugfixes, 9+5+4+5 features, ALPN/settings 
 | `is_mobile` dérivé UA | `is_mobile_ua(ua)` substring match, pas du slot | UA pool externe contient mobiles, slot ment |
 | `add_user()` hérite état | Copie geo/schedule/diurnal de `crawlers[0].profile` | Sinon ignore config dashboard |
 | Depth model fourchettes | `bounce uniform(0.5,0.7)` re-tiré par session | Probabilité fixe = pattern détectable |
+| Fuzzy v2 label/TLD spray | `MIN_LABEL_LEN=10`, `MIN_TLD_VARIANTS=3` | Plus strict que stem (≥8/≥3) car catch sur tout TLD nouveau ; mesure réelle 5,680 labels indexés vs 1,006 stems numériques sur ~1M domaines, 0 faux-positif sur sample legit |
+| `prometheus_exporter.py` extrait | Module dédié 57 lignes, `dashboard_collector.prometheus_metrics` devient delegate | Évite que le god-object accrête `/metrics` ; appelé via lazy-import pour casser cycle |
+| `tcp_tls_probe.py` extrait | Module dédié 55 lignes, `dns_prefetch` + `dns_stealth` consument | Évite import privé cross-module (`from .dns_prefetch import _tcp_tls_probe` violait CLAUDE.md anti-pattern) |
+| `diurnal_sleep(rng, lo, hi)` helper | Centralise pattern dupliqué 11× dans workers | -25 lignes nettes ; `diurnal_scale()` pour sleeps fixes (traffic_mirror, ws_noise) |
+| Test whitelist drift | Itère `apply_features` keys + asserte chaque key est dans `_get_all_features_state` | Blinde contre régression silencieuse type cookie_consent/quic_probe non persistés |
+| PR squash-merge depuis local diverged | `gh pr merge --squash` peut échouer FF, suivi de `git reset --hard origin/master` | Local master 8 commits ahead = divergence après squash sur origin ; reset = sync sans perdre travail (squash contient même contenu) |
+| `stealth_lifecycle.py` extrait | Module 110l, fonctions module-level prennent `collector` en arg ; collector délègue via wrappers fins | Sépare "spawn/cancel/drain workers" du collector ; lazy imports évitent cycle dns_prefetch ↔ collector |
+| `runtime_config.py` extrait | Module 162l, settings persistence + apply_config + apply_tld_filter ; `SETTINGS_FILE` y vit désormais | Sépare le "comment persister/appliquer" du "quoi exposer en JSON" ; collector reste responsable de `collect()` et `apply_features()` |
+| Header data → config.py | `ACCEPT_VARIANTS`/`CACHE_VARIANTS`/`SEC_FETCH_*`/`SEC_CH_UA_COMBOS`/`EXTERNAL_REFERRERS`/`MOBILE_*` migrés depuis profiles.py | Cohérent avec règle "données pures → config.py" ; profiles.py garde la logique de composition (`get_headers`) |
+| Sliding window prefetch hit-rate | `deque(maxlen=1000)` push True/False par observation ; cumulatifs gardés pour Prometheus counter | Le ratio cumulatif devient figé en process longue durée ; window 1000 obs reflète ~1-5min de crawl actif |
+| WebSocket handler log+raise | `except Exception: log.exception(...) + raise` après `WebSocketDisconnect` et `CancelledError: raise` | Erreurs uvicorn silencieuses par défaut ; remontée explicite + stack trace local sans masquer la signal |
+| `UAPool._lock` lazy-init | `Optional[Lock]` créé dans `replace()` au lieu de `__init__` | `asyncio.Lock()` au constructeur deprecated Py 3.10+ et casse tests qui run après `asyncio.run` (event loop policy state) |

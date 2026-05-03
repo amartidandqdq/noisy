@@ -9,7 +9,12 @@ import random
 import time
 from typing import List, Optional
 
-from .config import GEO_PROFILES, MOBILE_UA_POOL, UA_FALLBACK
+from .config import (
+    ACCEPT_VARIANTS, CACHE_VARIANTS, EXTERNAL_REFERRERS, GEO_PROFILES,
+    MOBILE_EXTRA_HEADERS, MOBILE_UA_POOL, MOBILE_UA_TOKENS,
+    SEC_CH_UA_COMBOS, SEC_FETCH_CROSS, SEC_FETCH_NAVIGATE, SEC_FETCH_SAME,
+    UA_FALLBACK,
+)
 from .tls_profiles import DEFAULT_SSL_CONTEXT, get_rotated_ssl_context
 
 log = logging.getLogger(__name__)
@@ -22,57 +27,12 @@ except ImportError:
 
 _ACCEPT_ENCODING = "gzip, deflate, br" if _BR_SUPPORTED else "gzip, deflate"
 
-# ---- Accept combos ----
-_ACCEPT_VARIANTS = [
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-]
-
-_CACHE_VARIANTS = [
-    {"Cache-Control": "no-cache", "Pragma": "no-cache"},
-    {"Cache-Control": "max-age=0"},
-    {},
-]
-
-# ---- Sec-Fetch ----
-SEC_FETCH_NAVIGATE = {"Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Sec-Fetch-User": "?1"}
-SEC_FETCH_SAME = {"Sec-Fetch-Site": "same-origin", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
-SEC_FETCH_CROSS = {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"}
-
-# ---- Sec-CH-UA ----
-SEC_CH_UA_COMBOS = [
-    {"Sec-CH-UA": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"', "Sec-CH-UA-Platform": '"Windows"'},
-    {"Sec-CH-UA": '"Chromium";v="125", "Google Chrome";v="125", "Not-A.Brand";v="99"', "Sec-CH-UA-Platform": '"macOS"'},
-    {"Sec-CH-UA": '"Chromium";v="126", "Microsoft Edge";v="126", "Not-A.Brand";v="99"', "Sec-CH-UA-Platform": '"Windows"'},
-    {"Sec-CH-UA": '"Chromium";v="123", "Google Chrome";v="123", "Not-A.Brand";v="99"', "Sec-CH-UA-Platform": '"Linux"'},
-]
-
-# ---- Referrers externes ----
-EXTERNAL_REFERRERS = [
-    "https://www.google.com/", "https://www.google.com/search?q=",
-    "https://www.bing.com/search?q=", "https://duckduckgo.com/?q=",
-    "https://www.facebook.com/", "https://t.co/",
-    "https://www.reddit.com/", "https://news.ycombinator.com/",
-]
-
-MOBILE_EXTRA_HEADERS = {"Sec-CH-UA-Mobile": "?1"}
-
-# Backward compat aliases
-_UA_FALLBACK = UA_FALLBACK
-
-
-# Backward compat alias — use tls_profiles.DEFAULT_SSL_CONTEXT instead
-SSL_CONTEXT = DEFAULT_SSL_CONTEXT
-
-
-_MOBILE_UA_TOKENS = ("Mobile", "iPhone", "iPad", "Android", "iPod", "Mobi", "Windows Phone")
+SSL_CONTEXT = DEFAULT_SSL_CONTEXT  # backward compat alias
 
 
 def is_mobile_ua(ua: str) -> bool:
     """Detecte si un User-Agent est mobile (substring match)."""
-    return any(tok in ua for tok in _MOBILE_UA_TOKENS)
+    return any(tok in ua for tok in MOBILE_UA_TOKENS)
 
 
 def _diurnal_weight(hour: float) -> float:
@@ -139,8 +99,8 @@ class UserProfile:
 
     def _rotate_fingerprint(self):
         """Rotation des headers stealth + TLS context (simule mise à jour navigateur)."""
-        self._accept = self.rng.choice(_ACCEPT_VARIANTS)
-        self._cache = self.rng.choice(_CACHE_VARIANTS)
+        self._accept = self.rng.choice(ACCEPT_VARIANTS)
+        self._cache = self.rng.choice(CACHE_VARIANTS)
         self._sec_ch_ua = self.rng.choice(SEC_CH_UA_COMBOS) if not self.is_mobile else {}
         self._dnt = str(self.rng.randint(0, 1))
         self._ssl_context = get_rotated_ssl_context(self.rng)
@@ -212,7 +172,7 @@ class UAPool:
 
     def __init__(self, initial: List[str]):
         self._pool: List[str] = list(initial)
-        self._lock = asyncio.Lock()
+        self._lock: Optional[asyncio.Lock] = None  # lazy: cree dans le bon event loop
 
     def get_random(self, rng: Optional[random.Random] = None) -> str:
         return (rng or random).choice(self._pool)
@@ -223,6 +183,8 @@ class UAPool:
 
     async def replace(self, agents: List[str]) -> None:
         log.info(f"[DEBUT] UAPool.replace | count={len(agents)}")
+        if self._lock is None:
+            self._lock = asyncio.Lock()
         async with self._lock:
             self._pool = list(agents)
         log.info(f"[FIN] UAPool.replace")

@@ -103,7 +103,7 @@ class TestUserProfile:
         profile = UserProfile(user_id=0, ua="TestBrowser/1.0", rng=rng)
         headers = profile.get_headers()
         # If external referrer triggered by seed, just check it's from the pool
-        from noisy_lib.profiles import EXTERNAL_REFERRERS
+        from noisy_lib.config import EXTERNAL_REFERRERS
         if "Referer" in headers:
             assert any(headers["Referer"].startswith(r) for r in EXTERNAL_REFERRERS)
         # Either no Referer or a valid external one — both acceptable without explicit referrer arg
